@@ -12,6 +12,7 @@ Install the add-on manually using the add-on file (`.nvda-addon`).
 4.  NVDA will ask if you want to install the add-on. Confirm the installation and follow the prompts.
 5.  NVDA will ask you to restart the screen reader. Do this to complete the installation.
 
+Note: espeak-NG has to be installed system-wide to use this add-on at the moment!
 
 ## ⚙️ Configuration
 
