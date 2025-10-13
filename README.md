@@ -2,9 +2,9 @@
 
 The Phoonnx TTS Driver is an NVDA add-on that integrates the Phoonnx engine as a speech synthesizer. This driver is designed to utilize ONNX-based voices (like PiperTTS) within the NVDA screen reader.
 
-## 📦 Installation
+## 📦 Installation (test version)
 
-Install the add-on manually using the add-on file (`.nvda-addon`).
+Install the test add-on manually using the add-on file (`.nvda-addon`).
 
 1.  Download the latest `.nvda-addon` file from my [Google Drive](https://drive.google.com/file/d/1l-bloYDdrpFJWfz4hZ2hGpr-fejTckHw/view?usp=sharing) (tested with NVDA 2025.3, minimal version is 2025.1)
 2.  Ensure NVDA is running.
