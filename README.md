@@ -6,7 +6,7 @@ The Phoonnx TTS Driver is an NVDA add-on that integrates the Phoonnx engine as a
 
 Install the test add-on manually using the add-on file (`.nvda-addon`).
 
-1.  Download the latest `.nvda-addon` file from my [Google Drive](https://drive.google.com/file/d/1l-bloYDdrpFJWfz4hZ2hGpr-fejTckHw/view?usp=sharing) (tested with NVDA 2025.3, minimal version is 2025.1)
+1.  Download the latest `.nvda-addon` file from the [releases section](https://github.com/timonvanhasselt/phoonnx-AddonNVDA/releases) (tested with NVDA 2025.3, minimal version is 2025.1)
 2.  Ensure NVDA is running.
 3.  Press Enter on the downloaded `.nvda-addon` file in Windows Explorer.
 4.  NVDA will ask if you want to install the add-on. Confirm the installation and follow the prompts.
