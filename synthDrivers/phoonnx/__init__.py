@@ -1,8 +1,7 @@
 import os
-import sys
 import threading
 from collections import OrderedDict
-from typing import OrderedDict as TOrderedDict, Optional, Set, Callable
+from typing import OrderedDict as TOrderedDict, Optional, Set
 import queue 
 
 # FIX: Import WavePlayer and AudioPurpose directly for the modern NVDA API (2025.3+)
@@ -17,7 +16,7 @@ from synthDriverHandler import (
     synthDoneSpeaking,
 )
 from speech.commands import IndexCommand, PitchCommand, RateCommand, VolumeCommand, BreakCommand 
-_ = lambda s: s 
+_ = lambda s: s
 
 # --- CRUCIAL CONFIGURATION ---
 VOICE_ID = "dii_nl-NL"
@@ -28,34 +27,91 @@ log.debug("PHOONNX DEBUG: __init__.py has started execution.")
 
 # --- Python Search Path Configuration ---
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
-PHOONNX_LIBS_PATH = os.path.join(DRIVER_DIR, "phoonnx_libs")
-if PHOONNX_LIBS_PATH not in sys.path:
-    sys.path.insert(0, PHOONNX_LIBS_PATH)
 
 # --- Global Exception Definition ---
 class PhoonnxException(Exception): pass
 
-# --- Imports of the TTS Logic (Phoonnx) ---
-try:
+
+def import_phoonnx():
     from phoonnx.config import SynthesisConfig
-    from phoonnx.voice import TTSVoice 
-    
+    from phoonnx.voice import TTSVoice, LOG
+    import numpy as np
+
+
+    class PatchedVoice(TTSVoice):
+
+        def synthesize_to_callback(self,
+                                   text: str,
+                                   audio_callback: callable,
+                                   index_callback: callable,
+                                   config: Optional[SynthesisConfig] = None,
+                                   speaker_id: Optional[int] = None):
+            """
+            Synthetiseert tekst en streamt ruwe 16-bit audio naar de audio_callback.
+            """
+            if config is None:
+                config = SynthesisConfig()
+
+            LOG.debug("text=%s", text)
+
+            if self.phonetic_spellings and config.enable_phonetic_spellings:
+                text = self.phonetic_spellings.apply(text)
+
+            if config.add_diacritics:
+                text = self.phonemizer.add_diacritics(text, self.config.lang_code)
+                LOG.debug("text+diacritics=%s", text)
+
+            sentence_phonemes = self.phonemize(text)
+            LOG.debug("phonemes=%s", sentence_phonemes)
+
+            all_phoneme_ids_for_synthesis = [
+                self.phonemes_to_ids(phonemes) for phonemes in sentence_phonemes if phonemes
+            ]
+
+            first_chunk = True
+            sentence_silence = 0.0
+            silence_int16_bytes = bytes(
+                int(self.config.sample_rate * sentence_silence * 2)
+            )
+
+            for phoneme_ids in all_phoneme_ids_for_synthesis:
+                if not phoneme_ids:
+                    continue
+
+                if not first_chunk:
+                    audio_callback(silence_int16_bytes)
+                first_chunk = False
+
+                # Synthese (Blokkeert, maar in de thread van NVDA)
+                audio_float_array = self.phoneme_ids_to_audio(phoneme_ids, config)
+
+                # Post-processing
+                if config.normalize_audio:
+                    max_val = np.max(np.abs(audio_float_array))
+                    if max_val < 1e-8:
+                        audio_float_array = np.zeros_like(audio_float_array)
+                    else:
+                        audio_float_array = audio_float_array / max_val
+
+                if config.volume != 1.0:
+                    audio_float_array = audio_float_array * config.volume
+
+                audio_float_array = np.clip(audio_float_array, -1.0, 1.0).astype(np.float32)
+
+                # Converteer naar ruwe 16-bit bytes
+                audio_int16_bytes: bytes = (audio_float_array * 32767).astype(np.int16).tobytes()
+
+                # Chunking en verzenden naar de callback
+                CHUNK_SIZE = 8192
+                for i in range(0, len(audio_int16_bytes), CHUNK_SIZE):
+                    chunk = audio_int16_bytes[i:i + CHUNK_SIZE]
+                    audio_callback(chunk)
+
+            # Einde van de synthese: signaleert NVDA dat het spreken klaar is
+            index_callback(None)
+
     log.info("Phoonnx: TTSVoice and dependencies successfully imported.")
-    TTS_VOICE_LOADED = True
-    
-except (ImportError, ModuleNotFoundError, AttributeError) as e:
-    log.critical(f"FATAL ERROR: Failed to load Phoonnx or dependency. Check bundling: {e}", exc_info=True)
-    TTS_VOICE_LOADED = False
-    
-    # Define dummy classes as fallback
-    class SynthesisConfig: pass
-    class TTSVoice:
-        @staticmethod
-        def load(*args, **kwargs): 
-            raise RuntimeError("Phoonnx library not loaded.")
-        def __init__(self, *args, **kwargs): pass
-        def synthesize_to_callback(self, *args, **kwargs): 
-             raise AttributeError("'TTSVoice' object has no attribute 'synthesize_to_callback'")
+    return PatchedVoice
 
 # =========================================================================
 # ASYNCHRONOUS LOADING AND STREAMING LOGIC (REVISED WITH QUEUE)
@@ -76,7 +132,7 @@ class _VoiceLoaderThread(threading.Thread):
         log.info(f"Phoonnx ASYNC: Starting asynchronous loading of voice '{self.voice_id}'...")
         try:
             # This is a blocking call in a separate thread
-            tts_voice = TTSVoice.load(self.model_path, self.config_path)
+            tts_voice =  import_phoonnx().load(self.model_path, self.config_path)
 
             samplesPerSec = 22050
             if hasattr(tts_voice, 'sample_rate'):
@@ -209,7 +265,7 @@ class SynthDriver(BaseSynthDriver):
 
     def __init__(self):
         super(SynthDriver, self).__init__()
-        self.tts_voice: Optional[TTSVoice] = None
+        self.tts_voice: Optional['PatchedVoice'] = None
         self._voice_id: Optional[str] = None 
         self._player: Optional[WavePlayer] = None 
         
@@ -233,12 +289,8 @@ class SynthDriver(BaseSynthDriver):
 
     @classmethod
     def check(cls) -> bool:
-        if not TTS_VOICE_LOADED:
-            return False
-            
         model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
         config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
-        
         if not (os.path.exists(model_path) and os.path.exists(config_path)):
             log.warning(f"Phoonnx check failed: Model or configuration file not found at expected location.")
             return False
@@ -261,8 +313,7 @@ class SynthDriver(BaseSynthDriver):
             available_voices = self.availableVoices
             if available_voices:
                 self._voice_id = list(available_voices.keys())[0]
-                if TTS_VOICE_LOADED:
-                    self._load_tts_voice() 
+                self._load_tts_voice()
         return self._voice_id
 
     def _set_voice(self, value: str):
@@ -271,8 +322,7 @@ class SynthDriver(BaseSynthDriver):
             return
         if self._voice_id != value:
             self._voice_id = value
-            if TTS_VOICE_LOADED:
-                self._load_tts_voice()
+            self._load_tts_voice()
 
     def _load_tts_voice(self):
         """Starts the asynchronous thread to initialize the TTSVoice instance and the WavePlayer."""
@@ -357,6 +407,7 @@ class SynthDriver(BaseSynthDriver):
         length_scale = 1.0 / (nvda_rate / 50.0)
         length_scale = max(0.2, min(2.0, length_scale))
 
+        from phoonnx.config import SynthesisConfig
         synthesis_config = SynthesisConfig(
             length_scale=length_scale,
             noise_scale=0.667, 
