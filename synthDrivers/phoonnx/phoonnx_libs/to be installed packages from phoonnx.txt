@@ -15,9 +15,9 @@ onnxruntime
 ovos_config
 ovos_date_parser
 ovos_number_parser
-ovos_utils
+ovos_utils    <-- use the adapted file_utils.py for solving a conflict with NVDA's watchdog.py
 packaging
-phoonnx
+phoonnx       <-- use the adapted voice.py (for streaming WAV)
 pytz
 quebra_frases
 regex
@@ -28,4 +28,5 @@ unicode_rbnf
 unicode_rbnf-2.4.0.dist-info
 watchdog
 yaml
+
 zoneinfo
