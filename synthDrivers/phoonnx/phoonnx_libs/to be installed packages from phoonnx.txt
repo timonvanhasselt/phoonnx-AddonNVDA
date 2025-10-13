@@ -15,7 +15,7 @@ onnxruntime
 ovos_config
 ovos_date_parser
 ovos_number_parser
-ovos_utils    <-- use the adapted file_utils.py for solving a conflict with NVDA's watchdog.py
+ovos_utils    <-- use the adapted file_utils.py for solving a conflict with NVDA's watchdog.py and the adapted log.py
 packaging
 phoonnx       <-- use the adapted voice.py (for streaming WAV)
 pytz
@@ -30,3 +30,4 @@ watchdog
 yaml
 
 zoneinfo
+
