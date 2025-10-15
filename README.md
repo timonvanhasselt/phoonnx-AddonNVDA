@@ -2,6 +2,8 @@
 
 The Phoonnx TTS Driver is an NVDA add-on for Windows NVDA screenreader that integrates the [Phoonnx engine](https://github.com/TigreGotico/phoonnx) as a speech synthesizer. This driver is designed to utilize ONNX-based voices (like PiperTTS) within the NVDA screen reader.
 
+Check the following youtube video to see it in action: https://www.youtube.com/watch?v=ASYrV8R1zQw
+
 ## Credits: 
 [@JarbasAI](https://github.com/JarbasAl) of for making the phoonnx engine!
 
