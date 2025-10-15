@@ -68,7 +68,7 @@ The folder structure of the add-on needs to look like this:
 
 ### 2. Model Files
 
-Ensure the following model and configuration files are present in the root driver directory:
+Ensure the following model and configuration files are present in the root driver directory (or change the model info in the init file and download other voice models):
 
 * `dii_nl-NL.onnx` (The ONNX model file)
 * `dii_nl-NL.onnx.json` (The configuration file for the model)
