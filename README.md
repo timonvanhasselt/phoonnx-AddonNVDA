@@ -53,15 +53,15 @@ The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
 
 The folder structure of the add-on needs to look like this:
 
-%APPDATA%\nvda\addons\phoonnx_tts_driver\
-├── manifest.ini                          
-├── synthDrivers/                         
-    └── phoonnx/                          
-        ├── __init__.py
-        ├── dii_nl-NL.onnx                        <-- MODEL 
-        ├── dii_nl-NL.onnx.json                   <-- MODEL CONFIGURATION
-        ├── phoonnx_libs/                         <-- Library with dependencies of phoonnx (onnxruntime, phoonnx, etc.)
-
+**%APPDATA%\nvda\addons\phoonnx_tts_driver\**
+* **manifest.ini**
+* **synthDrivers/**
+    * **phoonnx/**
+        * **__init__.py**
+        * **dii_nl-NL.onnx** <-- MODEL
+        * **dii_nl-NL.onnx.json** <-- MODEL CONFIGURATION
+        * **phoonnx_libs/** <-- Library with dependencies of phoonnx (onnxruntime, phoonnx, etc.)
+        
 ### 2. Model Files
 
 Ensure the following model and configuration files are present in the root driver directory:
