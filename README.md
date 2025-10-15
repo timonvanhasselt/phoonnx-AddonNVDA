@@ -49,11 +49,20 @@ NVDA currently uses **Python 3.11.9 (32-bit)**. You must use this exact version 
 
 The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
 
-1.  Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder. See list in the folder in this repo.
+1.  Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
 
-2. Due to potential conflicts with packages already included in NVDA's environment, you must replace or delete the files in `phoonnx_libs` that conflict with NVDA's core dependencies. See files in the repo.
+The folder structure of the add-on needs to look like this:
 
-### 3. Model Files
+%APPDATA%\nvda\addons\phoonnx_tts_driver\
+├── manifest.ini                          
+├── synthDrivers/                         
+    └── phoonnx/                          
+        ├── __init__.py
+        ├── dii_nl-NL.onnx                        <-- MODEL 
+        ├── dii_nl-NL.onnx.json                   <-- MODEL CONFIGURATION
+        ├── phoonnx_libs/                         <-- Library with dependencies of phoonnx (onnxruntime, phoonnx, etc.)
+
+### 2. Model Files
 
 Ensure the following model and configuration files are present in the root driver directory:
 
@@ -61,7 +70,7 @@ Ensure the following model and configuration files are present in the root drive
 * `dii_nl-NL.onnx.json` (The configuration file for the model)
 (or download other voice models at: https://huggingface.co/OpenVoiceOS/models)
 
-### 4. System Dependency (espeak-ng)
+### 3. System Dependency (espeak-ng)
 
 The `phoonnx` package currently relies on system-wide installation of the **espeak-ng** binary for certain functionalities (e.g., text processing/phonemization).
 
