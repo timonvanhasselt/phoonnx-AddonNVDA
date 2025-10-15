@@ -1,8 +1,28 @@
 import os
+import sys
 import threading
 from collections import OrderedDict
-from typing import OrderedDict as TOrderedDict, Optional, Set
+from typing import OrderedDict as TOrderedDict, Optional, Set, Callable
 import queue 
+import time
+
+
+# Importeer phoonnx types om type hinting in de driver te vereenvoudigen
+try:
+    from phoonnx.config import SynthesisConfig 
+    from phoonnx.voice import TTSVoice, LOG 
+except (ImportError, ModuleNotFoundError):
+    # Dit is prima, de werkelijke import gebeurt lazy in import_phoonnx()
+    class SynthesisConfig: pass
+    class TTSVoice: pass
+    class LOG: 
+        @staticmethod
+        def debug(*args, **kwargs): pass
+        @staticmethod
+        def error(*args, **kwargs): pass
+        @staticmethod
+        def info(*args, **kwargs): pass
+
 
 # FIX: Import WavePlayer and AudioPurpose directly for the modern NVDA API (2025.3+)
 from nvwave import WavePlayer, AudioPurpose 
@@ -25,96 +45,98 @@ CONFIG_FILENAME = f"{VOICE_ID}.onnx.json"
 
 log.debug("PHOONNX DEBUG: __init__.py has started execution.")
 
-# --- Python Search Path Configuration ---
+# --- Python Search Path Configuration (BEHOUDEN voor gebundelde libs) ---
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
+PHOONNX_LIBS_PATH = os.path.join(DRIVER_DIR, "phoonnx_libs")
+if PHOONNX_LIBS_PATH not in sys.path:
+    sys.path.insert(0, PHOONNX_LIBS_PATH)
 
 # --- Global Exception Definition ---
 class PhoonnxException(Exception): pass
 
 
 def import_phoonnx():
-    from phoonnx.config import SynthesisConfig
-    from phoonnx.voice import TTSVoice, LOG
-    import numpy as np
-
-
-    class PatchedVoice(TTSVoice):
-
-        def synthesize_to_callback(self,
-                                   text: str,
-                                   audio_callback: callable,
-                                   index_callback: callable,
-                                   config: Optional[SynthesisConfig] = None,
-                                   speaker_id: Optional[int] = None):
+    """
+    Importeert Phoonnx en retourneert de gepatchte TTSVoice klasse EN SynthesisConfig.
+    """
+    try:
+        from phoonnx.config import SynthesisConfig
+        from phoonnx.voice import TTSVoice, LOG 
+        import numpy as np # <-- Lazy import van numpy 
+        
+        class PatchedVoice(TTSVoice):
             """
-            Synthetiseert tekst en streamt ruwe 16-bit audio naar de audio_callback.
+            Patched TTSVoice klasse met de volledige synthese- en chunking logica.
             """
-            if config is None:
-                config = SynthesisConfig()
+            def synthesize_to_callback(self,
+                                       text: str,
+                                       audio_callback: Callable,
+                                       index_callback: Callable,
+                                       config: Optional[SynthesisConfig] = None,
+                                       speaker_id: Optional[int] = None):
+                
+                if config is None: config = SynthesisConfig() 
+                LOG.debug("text=%s", text)
+                try:
+                    
+                    if self.phonetic_spellings and config.enable_phonetic_spellings:
+                        text = self.phonetic_spellings.apply(text)
+                    if config.add_diacritics:
+                        text = self.phonemizer.add_diacritics(text, self.config.lang_code)
+                    
+                    sentence_phonemes = self.phonemize(text) 
+                    all_phoneme_ids_for_synthesis = [
+                        self.phonemes_to_ids(phonemes) for phonemes in sentence_phonemes if phonemes
+                    ]
 
-            LOG.debug("text=%s", text)
+                    first_chunk = True
+                    sentence_silence = 0.0
+                    silence_int16_bytes = bytes(
+                        int(self.config.sample_rate * sentence_silence * 2)
+                    )
 
-            if self.phonetic_spellings and config.enable_phonetic_spellings:
-                text = self.phonetic_spellings.apply(text)
+                    for phoneme_ids in all_phoneme_ids_for_synthesis:
+                        if not phoneme_ids: continue
+                        if not first_chunk: audio_callback(silence_int16_bytes)
+                        first_chunk = False
 
-            if config.add_diacritics:
-                text = self.phonemizer.add_diacritics(text, self.config.lang_code)
-                LOG.debug("text+diacritics=%s", text)
+                        audio_float_array = self.phoneme_ids_to_audio(phoneme_ids, config)
 
-            sentence_phonemes = self.phonemize(text)
-            LOG.debug("phonemes=%s", sentence_phonemes)
+                        # Post-processing
+                        max_val = np.max(np.abs(audio_float_array))
+                        if max_val >= 1e-8: audio_float_array = audio_float_array / max_val
+                        if config.volume != 1.0: audio_float_array = audio_float_array * config.volume
 
-            all_phoneme_ids_for_synthesis = [
-                self.phonemes_to_ids(phonemes) for phonemes in sentence_phonemes if phonemes
-            ]
+                        audio_float_array = np.clip(audio_float_array, -1.0, 1.0).astype(np.float32)
+                        audio_int16_bytes: bytes = (audio_float_array * 32767).astype(np.int16).tobytes()
 
-            first_chunk = True
-            sentence_silence = 0.0
-            silence_int16_bytes = bytes(
-                int(self.config.sample_rate * sentence_silence * 2)
-            )
+                        # Chunking
+                        CHUNK_SIZE = 8192
+                        for i in range(0, len(audio_int16_bytes), CHUNK_SIZE):
+                            chunk = audio_int16_bytes[i:i + CHUNK_SIZE]
+                            # index_callback wordt niet gebruikt voor chunking in deze TTS
+                            audio_callback(chunk)
 
-            for phoneme_ids in all_phoneme_ids_for_synthesis:
-                if not phoneme_ids:
-                    continue
+                    # Notify done speaking via index_callback(None)
+                    index_callback(None) 
+                    
+                except Exception as e:
+                    LOG.error(f"PatchedVoice: Fout tijdens synthese: {e}")
+                    # Zorg ervoor dat index_callback wordt aangeroepen, zelfs bij een fout, om de wachtrij vrij te geven
+                    index_callback(None) 
+                    return
+            
+        log.info("Phoonnx: TTSVoice and dependencies successfully imported.")
+        
+        return PatchedVoice, SynthesisConfig # <--- RETOURNEER NU BEIDE
 
-                if not first_chunk:
-                    audio_callback(silence_int16_bytes)
-                first_chunk = False
+    except (ImportError, ModuleNotFoundError, AttributeError) as e:
+        log.critical(f"FATAL ERROR: Failed to load Phoonnx or dependency. Check bundling: {e}", exc_info=True)
+        return None, None # <--- Retourneer twee None's bij fout
 
-                # Synthese (Blokkeert, maar in de thread van NVDA)
-                audio_float_array = self.phoneme_ids_to_audio(phoneme_ids, config)
-
-                # Post-processing
-                if config.normalize_audio:
-                    max_val = np.max(np.abs(audio_float_array))
-                    if max_val < 1e-8:
-                        audio_float_array = np.zeros_like(audio_float_array)
-                    else:
-                        audio_float_array = audio_float_array / max_val
-
-                if config.volume != 1.0:
-                    audio_float_array = audio_float_array * config.volume
-
-                audio_float_array = np.clip(audio_float_array, -1.0, 1.0).astype(np.float32)
-
-                # Converteer naar ruwe 16-bit bytes
-                audio_int16_bytes: bytes = (audio_float_array * 32767).astype(np.int16).tobytes()
-
-                # Chunking en verzenden naar de callback
-                CHUNK_SIZE = 8192
-                for i in range(0, len(audio_int16_bytes), CHUNK_SIZE):
-                    chunk = audio_int16_bytes[i:i + CHUNK_SIZE]
-                    audio_callback(chunk)
-
-            # Einde van de synthese: signaleert NVDA dat het spreken klaar is
-            index_callback(None)
-
-    log.info("Phoonnx: TTSVoice and dependencies successfully imported.")
-    return PatchedVoice
 
 # =========================================================================
-# ASYNCHRONOUS LOADING AND STREAMING LOGIC (REVISED WITH QUEUE)
+# ASYNCHRONOUS LOADING AND STREAMING LOGIC
 # =========================================================================
 
 class _VoiceLoaderThread(threading.Thread):
@@ -131,14 +153,19 @@ class _VoiceLoaderThread(threading.Thread):
     def run(self):
         log.info(f"Phoonnx ASYNC: Starting asynchronous loading of voice '{self.voice_id}'...")
         try:
-            # This is a blocking call in a separate thread
-            tts_voice =  import_phoonnx().load(self.model_path, self.config_path)
+            # Vang nu beide geretourneerde waardes op
+            VoiceClass, SynthesisConfigClass = import_phoonnx()
+            
+            if VoiceClass is None or SynthesisConfigClass is None:
+                raise PhoonnxException("TTS modules konden niet geladen worden.")
+
+            # Blocking load (gebruikt PatchedVoice.load)
+            tts_voice = VoiceClass.load(self.model_path, self.config_path)
 
             samplesPerSec = 22050
             if hasattr(tts_voice, 'sample_rate'):
                 samplesPerSec = tts_voice.sample_rate
             
-            # Create the WavePlayer
             player = WavePlayer(
                 channels=1, 
                 samplesPerSec=samplesPerSec, 
@@ -146,9 +173,10 @@ class _VoiceLoaderThread(threading.Thread):
                 purpose=AudioPurpose.SPEECH 
             )
 
-            # Change state in the main driver
             self.driver.tts_voice = tts_voice
             self.driver._player = player
+            # SLAG DE GELADEN CONFIG KLASSE OP IN DE DRIVER
+            self.driver._SynthesisConfig_class = SynthesisConfigClass
             
             log.info("Phoonnx ASYNC: Loading of TTSVoice and WavePlayer complete.")
 
@@ -156,9 +184,9 @@ class _VoiceLoaderThread(threading.Thread):
             log.error(f"Phoonnx ASYNC: Failed to load voice '{self.voice_id}': {e}", exc_info=True)
             self.driver.tts_voice = None
             self.driver._player = None
+            self.driver._SynthesisConfig_class = None # Zorg ervoor dat deze ook None is
             
         finally:
-            # Set the event
             self.driver._voice_loaded_event.set()
 
 
@@ -171,9 +199,7 @@ class _SynthQueueThread(threading.Thread):
         super().__init__()
         self.driver = driver
         self.daemon = True 
-        # Event to permanently shut down the thread
         self.stop_event = threading.Event() 
-        # Event to actively stop the current synthesis
         self.cancel_synthesis_event = threading.Event() 
         
     def run(self):
@@ -181,67 +207,64 @@ class _SynthQueueThread(threading.Thread):
         
         while not self.stop_event.is_set():
             try:
-                # Blocking get, but with a timeout to allow checking the stop_event
+                # request is: (text, config, index_callback, player_ref, tts_voice) - 5 elementen
                 request = self.driver._request_queue.get(timeout=0.1) 
             except queue.Empty:
                 continue
 
-            # Check again if the thread should not be terminated
-            if self.stop_event.is_set():
-                break
+            if self.stop_event.is_set(): break
                 
             try:
-                # Unpack the request parameters
+                # Ontpak 5 elementen (Structuur van refactor)
                 text, config, index_callback, player_ref, tts_voice = request 
                 
-                log.debug(f"Phoonnx QueueThread: Starting synthesis for: '{text[:20]}...'")
-
-                self.cancel_synthesis_event.clear() # Reset the cancellation flag
+                self.cancel_synthesis_event.clear() 
                 stop_log_sent = False 
                 
-                # Local callback function
                 def thread_local_audio_callback(chunk: bytes) -> int:
-                    """Streams audio and checks for cancellation requests."""
-                    
+                    """Stuurt audio en controleert op annuleringsverzoeken."""
                     nonlocal stop_log_sent
-
-                    # Check if the thread or the current synthesis should be cancelled
                     if self.stop_event.is_set() or self.cancel_synthesis_event.is_set():
                         if not stop_log_sent:
                             log.debug("Phoonnx: Stop/Cancel event set. Synthesis actively stopped.")
                             stop_log_sent = True 
-                        return 1 # Non-zero return to tell TTSVoice to stop
+                        return 1 
                         
                     try:
                         player_ref.feed(chunk)
                     except Exception:
-                        # Stop synthesis if the player fails/closes
                         return 1 
-
                     return 0 
                 
-                # Execute the blocking synthesis
                 tts_voice.synthesize_to_callback(
                     text, 
                     config=config, 
                     audio_callback=thread_local_audio_callback,
-                    index_callback=index_callback      
+                    index_callback=index_callback 
                 )
+
+                # CRUCIALE FIX BEHOUDEN: Wacht tot de WavePlayer klaar is met afspelen.
+                # Dit is essentieel voor NVDA.
+                # player_ref.idle() # <--- DEZE REGEL IS VERWIJDERD OM DE RESPONSIVITEIT TE VERBETEREN
                 
             except (PhoonnxException, Exception) as e:
                 if not self.stop_event.is_set() and not self.cancel_synthesis_event.is_set():
                     log.error(f"Phoonnx Error (QueueThread): TTS synthesis failed: {e}", exc_info=True)
             
             finally:
-                # Mark the task as done
                 self.driver._request_queue.task_done()
 
         log.info("Phoonnx SynthQueueThread: Processing loop has stopped.")
+        
+    def cancel_synthesis(self):
+        """Annuleert de huidige synthese in de thread."""
+        self.cancel_synthesis_event.set()
 
 
 class SynthDriver(BaseSynthDriver):
     """
     NVDA SynthDriver implementation for the Phoonnx TTS engine.
+    (Bijgewerkt met schone structuur en index callback logica van refactor)
     """
     name = "phoonnx"
     description = _("Phoonnx TTS Driver")
@@ -259,29 +282,27 @@ class SynthDriver(BaseSynthDriver):
     )
 
     _availableVoicesCache: Optional[TOrderedDict[str, VoiceInfo]] = None
-    _rate: int = 50
+    _rate: int = 50 
     _pitch: int = 50
     _volume: int = 100
 
     def __init__(self):
         super(SynthDriver, self).__init__()
-        self.tts_voice: Optional['PatchedVoice'] = None
+        # Type hinting veranderd naar de basisklasse
+        self.tts_voice: Optional[TTSVoice] = None 
         self._voice_id: Optional[str] = None 
         self._player: Optional[WavePlayer] = None 
+        self._SynthesisConfig_class: Optional[type] = None # <--- NIEUW ATTRIBUUT VOOR DE GELADEN CONFIG KLASSE
         
-        # Permanent queue and worker thread
         self._request_queue: queue.Queue = queue.Queue()
         self._worker_thread: Optional[_SynthQueueThread] = None
         
-        # Event and thread for asynchronous loading
         self._voice_loaded_event = threading.Event()
         self._loader_thread: Optional[_VoiceLoaderThread] = None 
 
         if self.check():
-            # Call _get_voice to start asynchronous loading
-            self._get_voice()
+            self._get_voice() 
             
-            # Start the permanent worker thread
             self._worker_thread = _SynthQueueThread(driver=self)
             self._worker_thread.start()
             
@@ -291,17 +312,22 @@ class SynthDriver(BaseSynthDriver):
     def check(cls) -> bool:
         model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
         config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
+        
         if not (os.path.exists(model_path) and os.path.exists(config_path)):
             log.warning(f"Phoonnx check failed: Model or configuration file not found at expected location.")
             return False
         
         return True
 
-    # --- Property/Setting Getters and Setters ---
     def _getAvailableVoices(self) -> TOrderedDict[str, VoiceInfo]:
+        """
+        Gebruikt de correcte aanroep voor VoiceInfo. 
+        (Bijgewerkt met generiekere display naam van refactor)
+        """
         if self._availableVoicesCache is None:
             self._availableVoicesCache = OrderedDict()
             language = VOICE_ID.split('_')[-1] if '_' in VOICE_ID else None
+            # Gebruik de generiekere display naam van de refactor
             display_name = f"Phoonnx ({VOICE_ID.replace('_', ' ').upper()})"
             
             self._availableVoicesCache[VOICE_ID] = VoiceInfo(VOICE_ID, display_name, language=language)
@@ -313,7 +339,8 @@ class SynthDriver(BaseSynthDriver):
             available_voices = self.availableVoices
             if available_voices:
                 self._voice_id = list(available_voices.keys())[0]
-                self._load_tts_voice()
+                if self.check():
+                    self._load_tts_voice() 
         return self._voice_id
 
     def _set_voice(self, value: str):
@@ -322,10 +349,10 @@ class SynthDriver(BaseSynthDriver):
             return
         if self._voice_id != value:
             self._voice_id = value
-            self._load_tts_voice()
+            if self.check():
+                self._load_tts_voice()
 
     def _load_tts_voice(self):
-        """Starts the asynchronous thread to initialize the TTSVoice instance and the WavePlayer."""
         if self._voice_id == VOICE_ID and not self._voice_loaded_event.is_set() and self._loader_thread is None:
             log.info(f"Phoonnx: Starting asynchronous loading for voice '{self._voice_id}'.")
             
@@ -343,6 +370,7 @@ class SynthDriver(BaseSynthDriver):
         elif self._voice_id != VOICE_ID:
             self.tts_voice = None
             self._player = None
+            self._SynthesisConfig_class = None # Wist ook de config klasse bij stemwisseling
             
     def _get_rate(self) -> int: return self._rate
     def _set_rate(self, value: int): self._rate = value
@@ -361,32 +389,31 @@ class SynthDriver(BaseSynthDriver):
         return {v.language for v in self.availableVoices.values()}
 
     def _onIndexReached(self, index: Optional[int]):
-        """This callback is called from the permanent worker thread."""
+        """
+        Callback van de worker thread om NVDA te notificeren.
+        """
         if index is not None:
-            synthIndexReached.notify(synth=self, index=index)
+            synthIndexReached.notify(synth=self, index=index) 
         else:
-            synthDoneSpeaking.notify(synth=self)
+            # Dit notificeert synthDoneSpeaking.
+            synthDoneSpeaking.notify(synth=self) 
     
     # --- Core Speech Control Functions ---
     def speak(self, speechSequence):
         """
-        Adds a speech request to the queue.
+        Voegt een spraakverzoek toe aan de queue.
         """
-        # The line `self.cancel()` was removed here to allow subsequent speech requests 
-        # (e.g., from NVDA's "Say All" command) to be correctly queued instead of cancelling 
-        # the currently running speech.
         
-        # Wait until the model is loaded, if necessary.
+        # Wacht tot de TTS-stem volledig is geladen (Overgenomen van refactor)
         if not self._voice_loaded_event.is_set():
             log.info("Phoonnx: Waiting for voice loading to complete (First speech).")
             self._voice_loaded_event.wait()
             log.info("Phoonnx: Voice successfully loaded after waiting.")
 
-        if not self.tts_voice or not self._player:
-            log.warning("Phoonnx: Cannot speak, TTS voice or WavePlayer not loaded.")
+        if not self.tts_voice or not self._player or not self._SynthesisConfig_class:
+            log.warning("Phoonnx: Cannot speak, TTS voice, WavePlayer, or Config Class not loaded.")
             return
 
-        # STEP 1: TEXT PREPARATION & COMMAND HANDLING
         current_rate = self._get_rate() 
         text = ""
         
@@ -395,44 +422,37 @@ class SynthDriver(BaseSynthDriver):
                 text += item
             elif isinstance(item, RateCommand):
                 current_rate = item.value 
-                log.debug(f"Phoonnx: RateCommand received (Value: {item.value}), used for calculation.")
             elif isinstance(item, (PitchCommand, VolumeCommand, BreakCommand, IndexCommand)):
                 pass 
 
-        if not text:
-            return
+        if not text: return
 
-        # STEP 2: CONFIGURATION (calculate speed)
+        # CONFIGURATION (calculate speed)
         nvda_rate = current_rate
         length_scale = 1.0 / (nvda_rate / 50.0)
         length_scale = max(0.2, min(2.0, length_scale))
 
-        from phoonnx.config import SynthesisConfig
-        synthesis_config = SynthesisConfig(
+        # Gebruik de opgeslagen SynthesisConfig klasse
+        synthesis_config = self._SynthesisConfig_class( # <--- CORRECTIE
             length_scale=length_scale,
             noise_scale=0.667, 
             noise_w_scale=0.8,
             enable_phonetic_spellings=True,
             add_diacritics=False
         )
-
-        # STEP 3: PLACE THE REQUEST IN THE QUEUE
+        
+        # PLAATS HET VERZOEK IN DE QUEUE: (text, config, index_callback, player_ref, tts_voice)
         request = (text, synthesis_config, self._onIndexReached, self._player, self.tts_voice)
         self._request_queue.put(request)
 
-
     def cancel(self):
-        """Cancels the current speech command and clears the queue."""
-        
-        # 1. Stop the audio output immediately
+        # Behoud de logica, identiek aan refactor
         if self._player:
             self._player.stop() 
         
-        # 2. Request the worker thread to cancel the current synthesis
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.cancel_synthesis_event.set()
             
-        # 3. Clear all remaining tasks from the queue
         while not self._request_queue.empty():
             try:
                 self._request_queue.get(block=False)
@@ -446,25 +466,19 @@ class SynthDriver(BaseSynthDriver):
             self._player.pause(switch)
 
     def terminate(self):
-        """
-        Ensures the shutdown of the worker thread, WavePlayer, and driver.
-        """
+        # Behoud de logica, identiek aan refactor
         log.info("Phoonnx: Driver is terminating.")
         
-        # 1. Close the WavePlayer.
         if self._player:
             self._player.close() 
             
-        # 2. Stop the permanent worker thread and wait for shutdown.
         if self._worker_thread and self._worker_thread.is_alive():
-            log.info("Phoonnx: Shutting down QueueThread...")
-            # Signal the thread to stop the loop
             self._worker_thread.stop_event.set()
-            # Wait max 1 second for a clean shutdown
             self._worker_thread.join(timeout=1) 
-            if self._worker_thread.is_alive():
-                log.warning("Phoonnx: QueueThread did not shut down within 1 second. Continuing.")
                 
         self.tts_voice = None 
+        self._SynthesisConfig_class = None # Wist ook de config klasse bij beëindiging
 
 log.debug("PHOONNX DEBUG: __init__.py complete. SynthDriver class is defined.")
+
+SynthDriver = SynthDriver
