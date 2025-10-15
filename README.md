@@ -52,7 +52,7 @@ The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
 1.  Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
 
 The folder structure of the add-on needs to look like this:
-
+```
 `%APPDATA%\nvda\addons\phoonnx_tts_driver\`
 ├── `manifest.ini`
 ├── `synthDrivers/`
@@ -61,7 +61,8 @@ The folder structure of the add-on needs to look like this:
 │       ├── `dii_nl-NL.onnx`                  <-- MODEL
 │       ├── `dii_nl-NL.onnx.json`             <-- MODEL CONFIGURATION
 │       └── `phoonnx_libs/`                   <-- Library with dependencies of phoonnx (onnxruntime, phoonnx, etc.)
-        
+```
+
 ### 2. Model Files
 
 Ensure the following model and configuration files are present in the root driver directory:
