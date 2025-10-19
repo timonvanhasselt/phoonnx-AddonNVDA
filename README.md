@@ -37,12 +37,14 @@ To develop or bundle this add-on, you need to set up a specific Python environme
 
 ### 1. Python Environment Setup
 
-NVDA currently uses **Python 3.11.9 (32-bit)**. You must use this exact version to ensure library compatibility.
+NVDA 2025.3 currently uses **Python 3.11.9 (32-bit)**. 
+NVDA 2026.1 (alpha) uses **Python 3.13.7 (64-bit)**
+You must use this exact versions to ensure library compatibility.
 
-1.  **Install Python 3.11.9 (32-bit)** for Windows.
+1.  **Install Python 3.11.9 (32-bit) or 3.13.7 (64-bit)** for Windows.
 2.  **Create a Virtual Environment (venv):**
     ```bash
-    py -3.11 -m venv phoonnx_venv
+    py -3.11/3.13 -m venv phoonnx_venv
     phoonnx_venv\Scripts\activate
     ```
 3.  **Install the Phoonnx Package:**
