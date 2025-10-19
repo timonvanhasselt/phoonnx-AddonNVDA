@@ -71,11 +71,8 @@ The folder structure of the add-on needs to look like this:
 
 ### 2. Model Files
 
-Ensure the following model and configuration files are present in the root driver directory (or change the model info in the init file and download other voice models):
-
-* `dii_nl-NL.onnx` (The ONNX model file)
-* `dii_nl-NL.onnx.json` (The configuration file for the model)
-(or download other voice models at: https://huggingface.co/OpenVoiceOS/models)
+Voices can now be downloaded via the new settingspanel in NVDA. They can also be manually added to the voices folder of the NVDA addon.
+Note: a model + config file is needed.
 
 ### 3. System Dependency (espeak-ng)
 
