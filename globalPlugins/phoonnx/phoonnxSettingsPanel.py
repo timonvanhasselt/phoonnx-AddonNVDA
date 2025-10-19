@@ -106,7 +106,7 @@ def is_voice_installed(info):
 class PhoonnxVoiceManagerPanel(SettingsPanel):
     """Instellingenpaneel voor het beheren van Phoonnx-stemmen (downloaden, selecteren)."""
     
-    title = _("Phoonnx Stemmenbeheer")
+    title = _("Phoonnx voices")
 
     def makeSettings(self, settingsSizer):
         """Bouwt de gebruikersinterface van het paneel."""
@@ -446,4 +446,5 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
     def script_showVoiceManagerPanel(self, gesture):
         """Toont het NVDA-instellingenvenster, met een focus op het Phoonnx-paneel."""
         gui.mainFrame.runSettingsDialog(gui.settingsDialogs.NVDASettingsDialog,
+
                                         startCategory=PhoonnxVoiceManagerPanel)
