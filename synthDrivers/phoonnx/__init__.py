@@ -10,7 +10,8 @@ from pathlib import Path
 import os.path
 from nvwave import WavePlayer, AudioPurpose 
 import numpy as np 
-import config
+# import config # <-- REMOVED
+import config # <--- NEW: Needed to retrieve the saved voice
 
 # --- Essential NVDA Core Imports ---
 from logHandler import log
@@ -29,7 +30,7 @@ DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
 
 log.debug("PHOONNX DEBUG: __init__.py has started execution.")
 
-# Padberekening voor de root van de add-on (Twee niveaus omhoog vanaf synthDrivers/phoonnx)
+# Path calculation for the root of the add-on (Two levels up from synthDrivers/phoonnx)
 ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
 
 # --- Python Search Path Configuration (KEEP for bundled libs) ---
@@ -40,16 +41,16 @@ if PHOONNX_LIBS_PATH not in sys.path:
 # --- Global Exception Definition ---
 class PhoonnxException(Exception): pass
 
-# --- FUNCTIE OM STEMCONFIGURATIES TE LADEN (AANGEPAST) ---
+# --- FUNCTION TO LOAD VOICE CONFIGURATIONS (ADJUSTED) ---
 def load_voice_configs() -> Dict[str, Dict[str, str]]:
     """
-    Leest de beschikbare stemconfiguraties uit het JSON-bestand en scant de
-    lokale installatiemap voor platte en geneste bestandsnamen.
+    Reads the available voice configurations from the JSON file and scans the
+    local installation directory for flat and nested filenames.
     """
     configs = {}
     config_path = os.path.join(DRIVER_DIR, VOICE_CONFIG_FILE)
     
-    # --- 1. Laad uit voices.json ---
+    # --- 1. Load from voices.json ---
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -60,75 +61,75 @@ def load_voice_configs() -> Dict[str, Dict[str, str]]:
         except Exception as e:
             log.critical(f"FATAL ERROR: Failed to read voice configuration file: {e}", exc_info=True)
 
-    # --- 2. Scan de Lokale Download Map (VOICE_INSTALL_DIR) op platte en geneste bestanden ---
+    # --- 2. Scan the Local Download Directory (VOICE_INSTALL_DIR) for flat and nested files ---
     VOICE_INSTALL_DIR = Path(os.path.join(ADDON_ROOT_DIR, 'synthDrivers', 'phoonnx', 'voices'))
     DRIVER_PATH = Path(DRIVER_DIR)
     
     if VOICE_INSTALL_DIR.is_dir():
-        log.info(f"Phoonnx: Start met scannen van platte en geneste stembestanden in: {VOICE_INSTALL_DIR}")
+        log.info(f"Phoonnx: Starting to scan for flat and nested voice files in: {VOICE_INSTALL_DIR}")
         
-        # 2a. Plat files in voices/ (e.g. dii_nl-NL.onnx)
+        # 2a. Flat files in voices/ (e.g. dii_nl-NL.onnx)
         flat_model_files = list(VOICE_INSTALL_DIR.glob("*.onnx")) + list(VOICE_INSTALL_DIR.glob("*.pt"))
         
-        # 2b. Geneste files (recursief) (e.g. voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx)
-        # We zoeken naar 'model.onnx' en 'model.pt' in submappen.
+        # 2b. Nested files (recursive) (e.g. voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx)
+        # We look for 'model.onnx' and 'model.pt' in subdirectories.
         nested_model_files = list(VOICE_INSTALL_DIR.rglob("model.onnx")) + list(VOICE_INSTALL_DIR.rglob("model.pt"))
         
         all_model_files = flat_model_files + nested_model_files
         
         for model_file in all_model_files:
             
-            # Bepaal de structuur en de paden
+            # Determine the structure and paths
             if model_file.parent == VOICE_INSTALL_DIR:
-                # Structuur: voices/dii_nl-NL.onnx (Plat)
+                # Structure: voices/dii_nl-NL.onnx (Flat)
                 voice_id = model_file.stem
                 config_file = model_file.with_suffix(model_file.suffix + '.json') 
                 
-                # Relatieve paden: voices/dii_nl-NL.onnx
+                # Relative paths: voices/dii_nl-NL.onnx
                 relative_model_path = os.path.join('voices', model_file.name)
                 relative_config_path = os.path.join('voices', config_file.name)
                 
             else:
-                # Structuur: voices/.../StemID/model.onnx (Genest)
-                # De stem ID is de naam van de map die model.onnx bevat
+                # Structure: voices/.../VoiceID/model.onnx (Nested)
+                # The voice ID is the name of the directory containing model.onnx
                 voice_id = model_file.parent.name
                 config_file = model_file.parent / "model.json" 
                 
-                # Relatieve paden: vanaf DRIVER_DIR (synthDrivers/phoonnx)
-                # Voorbeeld: voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx
+                # Relative paths: from DRIVER_DIR (synthDrivers/phoonnx)
+                # Example: voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx
                 relative_model_path = str(model_file.relative_to(DRIVER_PATH)).replace('\\', '/')
                 relative_config_path = str(config_file.relative_to(DRIVER_PATH)).replace('\\', '/')
                 
-            # Controleer of het configuratiebestand bestaat
+            # Check if the configuration file exists
             if config_file.exists():
                 
-                # Afleiding van de taal-ID
+                # Deduction of the language ID
                 parts = voice_id.split('_')
                 if len(parts) > 1:
-                    # Gebruik het deel na de eerste underscore, bv. 'nl-NL'
+                    # Use the part after the first underscore, e.g., 'nl-NL'
                     lang_tag = '_'.join(parts[1:]) 
                 else:
                     lang_tag = 'und' 
                 
                 if voice_id not in configs:
-                    # Voeg de lokaal gedownloade/geïnstalleerde stem toe
+                    # Add the locally downloaded/installed voice
                     configs[voice_id] = {
-                        "display_name": f"{voice_id} (Lokaal/Auto-detect)", 
+                        "display_name": f"{voice_id} (Local/Auto-detect)", 
                         "language": lang_tag,
                         "model_file": relative_model_path,
                         "config_file": relative_config_path
                     }
-                    log.info(f"Phoonnx: Lokale stem '{voice_id}' dynamisch toegevoegd. Pad: {relative_model_path}. Taal: {lang_tag}")
+                    log.info(f"Phoonnx: Local voice '{voice_id}' dynamically added. Path: {relative_model_path}. Language: {lang_tag}")
                     
                 else:
-                    # Overschrijf de paden als de stem al in voices.json staat
+                    # Overwrite the paths if the voice is already in voices.json
                     configs[voice_id]['model_file'] = relative_model_path
                     configs[voice_id]['config_file'] = relative_config_path
-                    log.info(f"Phoonnx: Stem '{voice_id}' uit JSON BIJGEWERKT naar lokaal pad: {relative_model_path}")
+                    log.info(f"Phoonnx: Voice '{voice_id}' from JSON UPDATED to local path: {relative_model_path}")
 
 
     if not configs:
-         log.critical("FATAL ERROR: Geen geldige stemconfiguraties gevonden.")
+         log.critical("FATAL ERROR: No valid voice configurations found.")
 
     return configs
 
@@ -156,7 +157,7 @@ def import_phoonnx():
 
             @property
             def sample_rate(self):
-                # of self._original_voice.sample_rate if available
+                # or self._original_voice.sample_rate if available
                 return self._original_voice.config.sample_rate
 
             @property
@@ -407,11 +408,11 @@ class SynthDriver(BaseSynthDriver):
         self._voice_loaded_event = threading.Event()
         self._loader_thread: Optional[_VoiceLoaderThread] = None
 
-        # LADEN VAN DE CONFIGURATIES BIJ INITIALISATIE
+        # LOADING OF CONFIGURATIONS AT INITIALIZATION
         SynthDriver._AVAILABLE_VOICES_CONFIG = load_voice_configs()
 
         if self.check():
-            # self._get_voice() # <--- VERWIJDERD: De NVDA-core roept de getter/setter later aan.
+            # self._get_voice() # <--- REMOVED: The NVDA core calls the getter/setter later.
 
             self._worker_thread = _SynthQueueThread(driver=self)
             self._worker_thread.start()
@@ -447,23 +448,23 @@ class SynthDriver(BaseSynthDriver):
     def _get_voice(self) -> Optional[str]:
         available_voices = self.availableVoices
         
-        # Als de stem nog niet is ingesteld, probeer de opgeslagen voorkeur op te halen.
+        # If the voice is not yet set, try to retrieve the saved preference.
         if self._voice_id is None: 
             
-            # 1. Probeer de door de gebruiker opgeslagen voorkeur op te halen via NVDA config
+            # 1. Try to retrieve the user's saved preference via NVDA config
             saved_voice_id = None
             try:
-                # config.getSynthConfig(self) haalt het config-object voor deze driver op
+                # config.getSynthConfig(self) retrieves the config object for this driver
                 saved_voice_id = config.getSynthConfig(self).voice
-                log.info(f"Phoonnx: Opgeslagen NVDA voorkeurstem: {saved_voice_id}")
+                log.info(f"Phoonnx: Saved NVDA preferred voice: {saved_voice_id}")
             except Exception:
-                log.warning("Phoonnx: Kon opgeslagen NVDA stem niet ophalen.")
+                log.warning("Phoonnx: Could not retrieve saved NVDA voice.")
             
-            # 2. Bepaal de uiteindelijke stem-ID
+            # 2. Determine the final voice ID
             if saved_voice_id and saved_voice_id in available_voices:
                 new_voice_id = saved_voice_id
             elif available_voices:
-                # Val terug op de hardgecodeerde standaard of de eerste beschikbare
+                # Fall back to the hardcoded default or the first available
                 default_voice_id = "dii_nl-NL" # Hardcoded fallback
                 
                 if default_voice_id in available_voices:
@@ -471,17 +472,17 @@ class SynthDriver(BaseSynthDriver):
                 else:
                     new_voice_id = list(available_voices.keys())[0]
                 
-                log.info(f"Phoonnx: Geen opgeslagen/geldige stem gevonden. Val terug op: {new_voice_id}")
+                log.info(f"Phoonnx: No saved/valid voice found. Falling back to: {new_voice_id}")
             else:
-                log.error("Phoonnx: Geen stemmen beschikbaar in de configuratie.")
+                log.error("Phoonnx: No voices available in the configuration.")
                 return None
 
-            # 3. Laad de stem
+            # 3. Load the voice
             self._voice_id = new_voice_id
             if self.check():
                 self._load_tts_voice()
                 
-        # Zorg ervoor dat de stem opnieuw geladen wordt als de vorige lading mislukte (self.tts_voice is None)
+        # Make sure the voice is reloaded if the previous load failed (self.tts_voice is None)
         elif self.tts_voice is None:
              if self.check():
                 self._load_tts_voice()
@@ -493,8 +494,8 @@ class SynthDriver(BaseSynthDriver):
             log.warning(f"Phoonnx: Attempting to set invalid voice: {value}.")
             return
         
-        # De BaseSynthDriver handelt het opslaan van de waarde af.
-        # Wij moeten alleen de stem intern wijzigen en laden.
+        # The BaseSynthDriver handles saving the value.
+        # We only need to change and load the voice internally.
         if self._voice_id != value:
             self._voice_id = value
             self._voice_loaded_event.clear() 
@@ -523,21 +524,21 @@ class SynthDriver(BaseSynthDriver):
         model_file_relative = voice_config["model_file"]
         config_file_relative = voice_config["config_file"]
         
-        # --- PATH CONSTRUCTION (met Normalisatie) ---
+        # --- PATH CONSTRUCTION (with Normalization) ---
         model_path = os.path.normpath(os.path.join(DRIVER_DIR, model_file_relative))
         config_path = os.path.normpath(os.path.join(DRIVER_DIR, config_file_relative))
 
-        log.info(f"Phoonnx: Probeert stem '{voice_id}' te laden. Modelpad: {model_path}")
+        log.info(f"Phoonnx: Trying to load voice '{voice_id}'. Model path: {model_path}")
         
-        # Controleer of de bestanden bestaan
+        # Check if the files exist
         if not (os.path.exists(model_path) and os.path.exists(config_path)):
-            log.error(f"Phoonnx: FOUT: Kan model- of configuratiebestand niet vinden voor '{voice_id}'.")
+            log.error(f"Phoonnx: ERROR: Cannot find model or configuration file for '{voice_id}'.")
             
-            # CRUCIALE LOGGING: Toon de volledige paden die NIET gevonden zijn
+            # CRUCIAL LOGGING: Show the full paths that were NOT found
             if not os.path.exists(model_path):
-                 log.error(f"Phoonnx: Foutpad model: {model_path} (Bestand NIET GEVONDEN)")
+                 log.error(f"Phoonnx: Error path model: {model_path} (File NOT FOUND)")
             if not os.path.exists(config_path):
-                 log.error(f"Phoonnx: Foutpad config: {config_path} (Bestand NIET GEVONDEN)")
+                 log.error(f"Phoonnx: Error path config: {config_path} (File NOT FOUND)")
 
             self.tts_voice = None
             self._player = None
@@ -545,7 +546,7 @@ class SynthDriver(BaseSynthDriver):
             self._voice_loaded_event.set()
             return
 
-        # Start het laadproces
+        # Start the loading process
         if not self._voice_loaded_event.is_set():
             log.info(f"Phoonnx: Starting asynchronous loading for voice '{self._voice_id}'.")
             
