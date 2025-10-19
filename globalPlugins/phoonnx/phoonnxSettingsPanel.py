@@ -14,46 +14,46 @@ from gui.settingsDialogs import SettingsPanel
 import gui 
 from pathlib import Path 
 import json 
-import shutil # Nodig voor het verplaatsen en verwijderen van mappen
+import shutil # Needed for moving and deleting directories
 
-# Importeer de vertaalfunctie
+# Import the translation function
 _ = lambda s: s 
 
-# --- Pad configuratie (Cruciaal voor het importeren van alle gebundelde libs) ---
+# --- Path configuration (Crucial for importing all bundled libs) ---
 
-# De basismap van de add-on: .../Phoonnx TTS Driver 64 bit
+# The base directory of the add-on: .../Phoonnx TTS Driver 64 bit
 ADDON_ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-# De map die alle root-pakketten bevat (ovos_plugin_manager, phoonnx, etc.)
+# The directory containing all root packages (ovos_plugin_manager, phoonnx, etc.)
 PHOONNX_LIBS_PATH = os.path.join(ADDON_ROOT_DIR, 'phoonnx_libs')
 
-# De **ENIGE** map waar we stemmen willen opslaan/controleren (Bestemmingspad).
+# The **ONLY** directory where we want to store/check voices (Destination path).
 VOICE_INSTALL_DIR = Path(os.path.join(ADDON_ROOT_DIR, 'synthDrivers', 'phoonnx', 'voices'))
 
-# Het bestandspad voor de manager state
+# The file path for the manager state
 VOICE_MANAGER_STATE_FILE = VOICE_INSTALL_DIR.parent / "voices_cache.json"
 
-# Hulpfunctie om het installatiepad te krijgen (Bestemmingspad)
+# Helper function to get the installation path (Destination path)
 def _get_addon_voice_path(voice_id):
-    """Retourneert het pad naar de installatiemap van de stem binnen de add-on."""
+    """Returns the path to the voice installation directory within the add-on."""
     return VOICE_INSTALL_DIR / voice_id
 
-# NIEUW: Hulpfunctie voor de hardcoded downloadlocatie (Bronpad)
+# NEW: Helper function for the hardcoded download location (Source path)
 def _get_hardcoded_cache_path(voice_id):
-    """Berekent de hardcoded cache locatie waar de stem downloadt (moet overeenkomen met model_manager.py)."""
-    # Dit pad is hardcoded in TTSModelInfo.voice_path in de Phoonnx bibliotheek
+    """Calculates the hardcoded cache location where the voice downloads (must match model_manager.py)."""
+    # This path is hardcoded in TTSModelInfo.voice_path in the Phoonnx library
     return Path(os.path.expanduser("~")) / ".cache" / "phoonnx" / "voices" / voice_id
 
 
-# VOEG DIT PAD TOE AAN sys.path ZODAT Python DE GEBUNDELDE AFHANKELIJKHEDEN KAN VINDEN
+# ADD THIS PATH TO sys.path SO Python CAN FIND THE BUNDLED DEPENDENCIES
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
-    log.debug(f"Phoonnx Voice Manager: Toegevoegd libs pad: {PHOONNX_LIBS_PATH}")
+    log.debug(f"Phoonnx Voice Manager: Added libs path: {PHOONNX_LIBS_PATH}")
 
 
-# --- Functie om de Voice Manager te laden ---
+# --- Function to load the Voice Manager ---
 def get_model_manager_and_voices():
-    """Laadt de TTSModelManager en haalt een lijst met steminformatie op."""
+    """Loads the TTSModelManager and retrieves a list of voice information."""
     
     TTSModelManager = None
     TTSModelInfo = None
@@ -62,55 +62,55 @@ def get_model_manager_and_voices():
         from phoonnx.model_manager import TTSModelManager, TTSModelInfo
         
     except ImportError as e:
-        log.error(f"FATALE FOUT: Kan Phoonnx modules niet importeren: {e}", exc_info=True)
+        log.error(f"FATAL ERROR: Cannot import Phoonnx modules: {e}", exc_info=True)
         return None, [], None, None
     except Exception as e:
-        log.error(f"FATALE FOUT: Onbekende fout tijdens import: {e}", exc_info=True)
+        log.error(f"FATAL ERROR: Unknown error during import: {e}", exc_info=True)
         return None, [], None, None
 
-    # Directe instantie van de manager
+    # Direct instance of the manager
     try:
-        # Initialiseer de manager zonder model_dir, aangezien deze hardcoded is in model_manager.py
+        # Initialize the manager without model_dir, as it is hardcoded in model_manager.py
         manager = TTSModelManager(cache_path=str(VOICE_MANAGER_STATE_FILE)) 
         
-        # Zorg ervoor dat de stemmen-map bestaat
+        # Ensure the voices directory exists
         VOICE_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-        log.debug(f"Phoonnx Manager gebruikt cache file: {VOICE_MANAGER_STATE_FILE}")
+        log.debug(f"Phoonnx Manager uses cache file: {VOICE_MANAGER_STATE_FILE}")
 
         return manager, [], TTSModelManager, TTSModelInfo
         
     except Exception as e:
-        log.error(f"Fout bij het initialiseren van Phoonnx Model Manager: {e}", exc_info=True)
+        log.error(f"Error initializing Phoonnx Model Manager: {e}", exc_info=True)
         return None, [], None, None
 
 
-# NIEUW: Hulpfunctie voor statuscontrole
+# NEW: Helper function for status check
 def is_voice_installed(info):
-    """Controleert of een stem daadwerkelijk lokaal is geïnstalleerd (modelbestand bestaat)."""
+    """Checks if a voice is actually installed locally (model file exists)."""
     
-    # We controleren de add-on map, NIET de cache map
+    # We check the add-on directory, NOT the cache directory
     model_dir = _get_addon_voice_path(info.voice_id)
     
     if not model_dir.is_dir():
         return False
         
-    # Zoek naar ONNX of PT bestanden (de feitelijke modellen)
+    # Search for ONNX or PT files (the actual models)
     model_files = list(model_dir.glob("*.onnx")) + list(model_dir.glob("*.pt"))
     
     return len(model_files) > 0
 
 
-# --- Het Instellingenpaneel (GUI) ---
+# --- The Settings Panel (GUI) ---
 class PhoonnxVoiceManagerPanel(SettingsPanel):
-    """Instellingenpaneel voor het beheren van Phoonnx-stemmen (downloaden, selecteren)."""
+    """Settings panel for managing Phoonnx voices (downloading, selecting)."""
     
     title = _("Phoonnx voices")
 
     def makeSettings(self, settingsSizer):
-        """Bouwt de gebruikersinterface van het paneel."""
+        """Builds the user interface of the panel."""
         sHelper = gui.guiHelper.BoxSizerHelper(self, sizer=settingsSizer)
         
-        # De manager wordt geïnitialiseerd zonder de downloadmap te forceren (omdat we gaan verplaatsen)
+        # The manager is initialized without forcing the download directory (because we are going to move)
         self.manager, self.voices, self.TTSModelManager, self.TTSModelInfo = get_model_manager_and_voices()
         
         self.loading_label = None
@@ -118,15 +118,15 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.sDetails = None
         self.sDownloadButton = None
         self.sDeleteButton = None
-        # self.sSetDefaultButton = None # VERWIJDERD
+        # self.sSetDefaultButton = None # REMOVED
         
         self.buttonSizer = None 
         
         if not self.manager:
-            error_label = wx.StaticText(self, wx.ID_ANY, _("Fout: Kan Phoonnx Voice Manager niet laden. Zie NVDA-log voor details."))
+            error_label = wx.StaticText(self, wx.ID_ANY, _("Error: Cannot load Phoonnx Voice Manager. See NVDA log for details."))
             sHelper.addItem(error_label, proportion=0, flag=wx.ALL, border=10)
         else:
-            self.loading_label = wx.StaticText(self, wx.ID_ANY, _("Laden van stemmenlijst (kan even duren)..."))
+            self.loading_label = wx.StaticText(self, wx.ID_ANY, _("Loading voices list (may take a moment)..."))
             sHelper.addItem(self.loading_label, proportion=0, flag=wx.ALL | wx.ALIGN_CENTER, border=10)
             
             self._add_hidden_controls(sHelper)
@@ -136,29 +136,29 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             self.update_button_states()
 
     def _add_hidden_controls(self, sHelper):
-        """Voegt de daadwerkelijke stemmenbeheer elementen toe (standaard verborgen)."""
+        """Adds the actual voice management elements (hidden by default)."""
         
-        self.available_label = wx.StaticText(self, wx.ID_ANY, _("Beschikbare stemmen:"))
+        self.available_label = wx.StaticText(self, wx.ID_ANY, _("Available voices:"))
         sHelper.addItem(self.available_label, proportion=0, flag=wx.ALL | wx.ALIGN_LEFT, border=5)
         self.available_label.Hide()
 
         self.sList = wx.ListBox(self, wx.ID_ANY, choices=[])
         sHelper.addItem(self.sList, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        self.sList.SetToolTip(_("Lijst van alle beschikbare stemmen."))
+        self.sList.SetToolTip(_("List of all available voices."))
         self.sList.Hide()
         
-        self.sDetails = wx.StaticText(self, wx.ID_ANY, _("Selecteer een stem voor details..."))
+        self.sDetails = wx.StaticText(self, wx.ID_ANY, _("Select a voice for details..."))
         sHelper.addItem(self.sDetails, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
         self.sDetails.Hide()
         
         self.buttonSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.sDownloadButton = wx.Button(self, wx.ID_ANY, _("Download/Update"))
-        self.sDeleteButton = wx.Button(self, wx.ID_ANY, _("Verwijderen"))
-        # self.sSetDefaultButton is VERWIJDERD
+        self.sDeleteButton = wx.Button(self, wx.ID_ANY, _("Delete"))
+        # self.sSetDefaultButton is REMOVED
         
         self.buttonSizer.Add(self.sDownloadButton, 0, wx.ALL, 5)
         self.buttonSizer.Add(self.sDeleteButton, 0, wx.ALL, 5)
-        # self.buttonSizer.Add(self.sSetDefaultButton, 0, wx.ALL, 5) # VERWIJDERD
+        # self.buttonSizer.Add(self.sSetDefaultButton, 0, wx.ALL, 5) # REMOVED
         
         sHelper.addItem(self.buttonSizer, proportion=0, flag=wx.ALIGN_CENTER | wx.ALL, border=5)
         
@@ -167,14 +167,14 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.sList.Bind(wx.EVT_LISTBOX, self.onVoiceSelect)
         self.sDownloadButton.Bind(wx.EVT_BUTTON, self.onDownload)
         self.sDeleteButton.Bind(wx.EVT_BUTTON, self.onDelete)
-        # self.sSetDefaultButton.Bind(wx.EVT_BUTTON, self.onSetDefault) # VERWIJDERD
+        # self.sSetDefaultButton.Bind(wx.EVT_BUTTON, self.onSetDefault) # REMOVED
 
     def _load_voices_async(self):
-        """Start een thread om de stemmenlijst op te halen."""
+        """Starts a thread to retrieve the voice list."""
         
         def run_load():
             try:
-                # De manager zal nu de geconfigureerde VOICE_INSTALL_DIR controleren.
+                # The manager will now check the configured VOICE_INSTALL_DIR.
                 self.manager.refresh_voices()
             except Exception as exc:
                 log.warning(f"Voice refresh failed; attempting load: {exc}")
@@ -188,67 +188,67 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             threading.Thread(target=run_load, daemon=True).start()
 
     def on_voices_loaded(self):
-        """Wordt op de MainThread aangeroepen nadat de stemmenlijst is geladen."""
+        """Called on the MainThread after the voice list has been loaded."""
         if not self.manager:
             return 
             
-        # 1. Verberg het 'Laden...' bericht
+        # 1. Hide the 'Loading...' message
         if self.loading_label:
             self.loading_label.Hide()
             
-        # 2. HUIDIGE STEMMEN: Map maken van manager's stemmen (ID's)
+        # 2. CURRENT VOICES: Create map of manager's voices (IDs)
         manager_voices_ids = {v.voice_id for v in self.voices}
         
-        # 3. CONTROLEER OP LOKAAL GEÏNSTALLEERDE, ONBEKENDE STEMMEN
-        log.info(f"Phoonnx: Controle op lokaal geïnstalleerde stemmen in {VOICE_INSTALL_DIR}")
+        # 3. CHECK FOR LOCALLY INSTALLED, UNKNOWN VOICES
+        log.info(f"Phoonnx: Checking for locally installed voices in {VOICE_INSTALL_DIR}")
         
-        # Loop door de stem-mappen op de installatielocatie
+        # Loop through the voice directories at the installation location
         for voice_dir in VOICE_INSTALL_DIR.iterdir():
             if voice_dir.is_dir():
                 voice_id = voice_dir.name
                 
-                # Check 1: Is er een modelbestand?
+                # Check 1: Is there a model file?
                 has_model_file = len(list(voice_dir.glob("*.onnx")) + list(voice_dir.glob("*.pt"))) > 0
                 
-                # Check 2: Is de stem al bekend bij de manager EN is het lokaal geïnstalleerd?
+                # Check 2: Is the voice already known to the manager AND is it locally installed?
                 if voice_id not in manager_voices_ids and has_model_file:
                     
-                    log.warning(f"Phoonnx: Lokale stem '{voice_id}' is niet bekend bij de manager. Voeg toe aan de lijst.")
+                    log.warning(f"Phoonnx: Local voice '{voice_id}' is unknown to the manager. Adding to the list.")
                     
-                    # Probeer taal te parsen
+                    # Try to parse language
                     lang_tag = voice_id.split('_')[0] if '_' in voice_id else 'unk'
                     
-                    # Probeer lokale config te laden (voor een betere TTSModelInfo)
+                    # Try to load local config (for a better TTSModelInfo)
                     config_available = False
                     config_path = voice_dir / "model.json"
                     if config_path.exists():
                         config_available = True 
                     
                     try:
-                        # Maak een TTSModelInfo object 
+                        # Create a TTSModelInfo object 
                         local_info = self.TTSModelInfo(
                             voice_id=voice_id,
                             lang=lang_tag,
                             model_url="local", # Dummy URL
                             config_url="local", # Dummy URL
-                            config=config_available # Markeer als lokaal geconfigureerd/aanwezig
+                            config=config_available # Mark as locally configured/present
                         )
                         self.voices.append(local_info)
-                        log.info(f"Phoonnx: Lokale stem {voice_id} succesvol toegevoegd aan de manager lijst.")
+                        log.info(f"Phoonnx: Local voice {voice_id} successfully added to the manager list.")
                     except Exception as e:
-                        log.error(f"Fout bij het creëren van TTSModelInfo voor lokale stem {voice_id}: {e}", exc_info=True)
+                        log.error(f"Error creating TTSModelInfo for local voice {voice_id}: {e}", exc_info=True)
 
 
-        # 4. Update de ListBox met de resultaten (inclusief lokaal toegevoegde stemmen)
+        # 4. Update the ListBox with the results (including locally added voices)
         voice_names = []
         for info in self.voices:
             is_installed = is_voice_installed(info) 
-            status = _("(Geïnstalleerd)") if is_installed else _("(Niet geïnstalleerd)")
+            status = _("(Installed)") if is_installed else _("(Not installed)")
             voice_names.append(f"{info.voice_id} ({info.lang}) - {status}")
             
         self.sList.Set(voice_names)
         
-        # 5. Toon de elementen
+        # 5. Show the elements
         self.available_label.Show()
         self.sList.Show()
         self.sDetails.Show()
@@ -258,11 +258,11 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.Layout()
         self.GetParent().Layout()
         
-        # 6. Werk de knopstatus bij
+        # 6. Update the button status
         self.update_button_states()
 
     def update_button_states(self, selected_voice_info=None):
-        """Schakelt de knoppen in/uit op basis van de geselecteerde stemstatus."""
+        """Enables/disables the buttons based on the selected voice status."""
         if self.sDownloadButton is None:
             return 
             
@@ -270,11 +270,11 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             is_installed = is_voice_installed(selected_voice_info)
             self.sDownloadButton.Enable(True)
             self.sDeleteButton.Enable(is_installed)
-            # self.sSetDefaultButton enablement logic VERWIJDERD
+            # self.sSetDefaultButton enablement logic REMOVED
         else:
             self.sDownloadButton.Enable(False)
             self.sDeleteButton.Enable(False)
-            # self.sSetDefaultButton enablement logic VERWIJDERD
+            # self.sSetDefaultButton enablement logic REMOVED
 
     def onVoiceSelect(self, evt):
         selected_index = self.sList.GetSelection()
@@ -286,47 +286,47 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         is_installed = is_voice_installed(selected_voice_info)
 
         details = (
-            _("Naam: ") + selected_voice_info.voice_id + "\n"
+            _("Name: ") + selected_voice_info.voice_id + "\n"
             + _("ID: ") + selected_voice_info.voice_id + "\n"
-            + _("Taal: ") + selected_voice_info.lang + "\n"
-            + _("Geïnstalleerd: ") + (_("Ja") if is_installed else _("Nee"))
+            + _("Language: ") + selected_voice_info.lang + "\n"
+            + _("Installed: ") + (_("Yes") if is_installed else _("No"))
         )
         self.sDetails.SetLabel(details)
         self.update_button_states(selected_voice_info)
 
-    # --- Hulpfuncties voor Download/Delete ---
+    # --- Helper functions for Download/Delete ---
     
     def _get_voice_info(self, voice_id):
-        """Zoekt de TTSModelInfo op basis van de ID."""
+        """Looks up the TTSModelInfo based on the ID."""
         voice_info = next((v for v in self.voices if v.voice_id == voice_id), None)
         if not voice_info:
-            raise ValueError(f"Stem '{voice_id}' niet gevonden in de lijst.")
+            raise ValueError(f"Voice '{voice_id}' not found in the list.")
         return voice_info
 
     def _download_voice(self, voice_id):
-        """Wrapper voor de download taak. Laadt de stem en verplaatst deze daarna naar de add-on map."""
+        """Wrapper for the download task. Loads the voice and then moves it to the add-on directory."""
         
-        # 1. Start de download naar de hardcoded cache map (~/.cache/phoonnx/voices/)
+        # 1. Start the download to the hardcoded cache directory (~/.cache/phoonnx/voices/)
         voice_info = self._get_voice_info(voice_id)
-        # De download gebeurt hier (en gebruikt intern de hardcoded cache map)
+        # The download happens here (and internally uses the hardcoded cache directory)
         voice_info.load() 
 
-        # 2. Bepaal de paden
-        source_path = _get_hardcoded_cache_path(voice_id) # De hardcoded cache map (Bron)
-        dest_path = _get_addon_voice_path(voice_id)     # De NVDA add-on map (Bestemming)
+        # 2. Determine the paths
+        source_path = _get_hardcoded_cache_path(voice_id) # The hardcoded cache directory (Source)
+        dest_path = _get_addon_voice_path(voice_id)     # The NVDA add-on directory (Destination)
 
         if source_path.is_dir():
-            # 3. Verplaatsen van de cache naar de NVDA add-on map
+            # 3. Move from the cache to the NVDA add-on directory
             if dest_path.exists():
-                # Verwijder de oude map in de add-on voor een schone verplaatsing (bij Update)
-                log.info(f"Phoonnx: Verwijder bestaande add-on stemmap voor update: {dest_path}")
+                # Delete the old directory in the add-on for a clean move (for Update)
+                log.info(f"Phoonnx: Removing existing add-on voice directory for update: {dest_path}")
                 shutil.rmtree(dest_path) 
             
-            # Verplaats de map recursief van de cache naar de add-on map
+            # Recursively move the directory from the cache to the add-on directory
             shutil.move(str(source_path), str(dest_path)) 
-            log.info(f"Phoonnx: Bestanden voor {voice_id} succesvol verplaatst van cache ({source_path}) naar add-on map ({dest_path}).")
+            log.info(f"Phoonnx: Files for {voice_id} successfully moved from cache ({source_path}) to add-on directory ({dest_path}).")
             
-            # OPTIONEEL: Probeer de lege parent cache map te verwijderen, indien leeg
+            # OPTIONAL: Try to delete the empty parent cache directory, if empty
             try:
                 source_parent = source_path.parent
                 if source_parent.exists() and not list(source_parent.iterdir()):
@@ -334,73 +334,73 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             except OSError:
                 pass
         else:
-            log.error(f"Phoonnx: Download voltooid, maar de bronmap {source_path} is niet gevonden. Kan niet verplaatsen.")
+            log.error(f"Phoonnx: Download complete, but the source directory {source_path} was not found. Cannot move.")
 
 
     def _delete_voice(self, voice_id):
-        """Wrapper voor de verwijder taak. Verwijder de map handmatig."""
+        """Wrapper for the delete task. Deletes the directory manually."""
         voice_path = _get_addon_voice_path(voice_id)
         if voice_path.exists():
-            log.info(f"Phoonnx: Bestanden handmatig verwijderen: {voice_path}")
-            # Verwijder de map recursief
+            log.info(f"Phoonnx: Manually deleting files: {voice_path}")
+            # Recursively delete the directory
             shutil.rmtree(voice_path)
 
 
-    # --- Achtergrondtaken (Wrapper) ---
+    # --- Background Tasks (Wrapper) ---
 
     def _execute_async_task(self, task_func, success_msg, voice_id, refresh_synthesizer=False):
-        """Voert een taak uit in een aparte thread voor download/verwijdering."""
+        """Executes a task in a separate thread for download/deletion."""
         
         self.sDownloadButton.Disable()
         self.sDeleteButton.Disable()
         
-        # Gebruik ui.message() in plaats van api.speak()
-        ui.message(_(f"Start de operatie voor stem {voice_id}.")) 
+        # Use ui.message() instead of api.speak()
+        ui.message(_(f"Starting operation for voice {voice_id}.")) 
         
         def wrapper():
             try:
                 task_func(voice_id)
                 
                 if refresh_synthesizer:
-                    # **CORRECTIE 2: Vervanging van de verouderde/onvoldoende refresh-aanroep.**
+                    # **CORRECTION 2: Replacement of the outdated/insufficient refresh call.**
                     current_synth = synthDriverHandler.getSynth()
                     if current_synth and current_synth.name == "phoonnx":
-                        # De synthesizer opnieuw instellen dwingt een herlading van de stemmenlijst af.
+                        # Resetting the synthesizer forces a reload of the voice list.
                         synthDriverHandler.setSynth(current_synth.name)
-                        log.info(f"Phoonnx: Synthesizer is opnieuw geladen om de stemmenlijst bij te werken na operatie van {voice_id}.")
+                        log.info(f"Phoonnx: Synthesizer reloaded to update the voice list after operation for {voice_id}.")
                     else:
-                         log.warning("Phoonnx: Kan Phoonnx synthesizer niet opnieuw laden (niet de huidige actieve).")
+                         log.warning("Phoonnx: Cannot reload Phoonnx synthesizer (not the current active one).")
 
                     
                 wx.CallAfter(lambda: self.on_async_task_complete(True, success_msg))
             except Exception as e:
-                log.error(f"Fout bij asynchrone taak voor stem {voice_id}: {e}", exc_info=True)
-                # Geef een kortere gesproken melding
-                wx.CallAfter(lambda: self.on_async_task_complete(False, _("Fout: De operatie is mislukt. Zie NVDA-log.")))
+                log.error(f"Error during asynchronous task for voice {voice_id}: {e}", exc_info=True)
+                # Give a shorter spoken message
+                wx.CallAfter(lambda: self.on_async_task_complete(False, _("Error: Operation failed. See NVDA log.")))
 
         threading.Thread(target=wrapper, daemon=True).start()
 
 
     def on_async_task_complete(self, success, message):
-        """Wordt aangeroepen nadat een asynchrone taak is voltooid."""
+        """Called after an asynchronous task is completed."""
         
-        # Laad de stemmen opnieuw om de status in de ListBox bij te werken
+        # Reload the voices to update the status in the ListBox
         self.manager.refresh_voices()
         self.voices = list(self.manager.voices.values())
         
         voice_names = []
         for info in self.voices:
-            status = _("(Geïnstalleerd)") if is_voice_installed(info) else _("(Niet geïnstalleerd)")
+            status = _("(Installed)") if is_voice_installed(info) else _("(Not installed)")
             voice_names.append(f"{info.voice_id} ({info.lang}) - {status}")
         self.sList.Set(voice_names)
         
         self.onVoiceSelect(None) 
         
-        # Gebruik ui.message() voor de gesproken feedback
+        # Use ui.message() for spoken feedback
         ui.message(message) 
         
         dlg = wx.MessageDialog(self, message, 
-                               _("Operatie voltooid") if success else _("Operatie mislukt"), 
+                               _("Operation complete") if success else _("Operation failed"), 
                                wx.OK | (wx.ICON_INFORMATION if success else wx.ICON_ERROR))
         dlg.ShowModal()
         dlg.Destroy()
@@ -408,7 +408,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.onVoiceSelect(None)
         
 
-    # --- Knoophandlers ---
+    # --- Button Handlers ---
 
     def onDownload(self, evt):
         selected_index = self.sList.GetSelection()
@@ -417,7 +417,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         
         self._execute_async_task(
             task_func=self._download_voice, 
-            success_msg=_("Download is voltooid. De stem is nu beschikbaar in de synthesizer-instellingen."),
+            success_msg=_("Download is complete. The voice is now available in the synthesizer settings."),
             voice_id=voice_info.voice_id,
             refresh_synthesizer=True
         )
@@ -429,21 +429,19 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         
         self._execute_async_task(
             task_func=self._delete_voice, 
-            success_msg=_("De stem is succesvol verwijderd. De synthesizer-stemmenlijst is bijgewerkt."),
+            success_msg=_("The voice has been successfully deleted. The synthesizer voice list has been updated."),
             voice_id=voice_info.voice_id,
             refresh_synthesizer=True
         )
 
-    # def onSetDefault(self, evt): # VERWIJDERD (Voormalig 18 regels code verwijderd)
+    # def onSetDefault(self, evt): # REMOVED (Formerly 18 lines of code removed)
 
     def onSave(self):
-        """Vereiste methode voor SettingsPanel. Acties worden direct uitgevoerd."""
+        """Required method for SettingsPanel. Actions are executed immediately."""
         pass
         
     @script(gesture="kb:NVDA+shift+v") 
     def script_showVoiceManagerPanel(self, gesture):
-        """Toont het NVDA-instellingenvenster, met een focus op het Phoonnx-paneel."""
+        """Shows the NVDA settings window, focused on the Phoonnx panel."""
         gui.mainFrame.runSettingsDialog(gui.settingsDialogs.NVDASettingsDialog,
-
                                         startCategory=PhoonnxVoiceManagerPanel)
-
