@@ -60,12 +60,11 @@ The folder structure of the add-on needs to look like this:
 ```
 `%APPDATA%\nvda\addons\phoonnx_tts_driver\`
 ├── `manifest.ini`
+├── `phoonnx_libs/`            <-- needed libs for the add-on to import (moved from synthDrivers)
 ├── `synthDrivers/`
 │   └── `phoonnx/`
 │       ├── `__init__.py`
-│       ├── `dii_nl-NL.onnx`                  <-- MODEL
-│       ├── `dii_nl-NL.onnx.json`             <-- MODEL CONFIGURATION
-│       └── `phoonnx_libs/`                   <-- Library with dependencies of phoonnx (onnxruntime, phoonnx, etc.)
+│       ├── voices             <-- the folder containing the downloaded voice models and configs
 ```
 
 ### 2. Model Files
