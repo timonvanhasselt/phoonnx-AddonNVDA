@@ -10,8 +10,7 @@ from pathlib import Path
 import os.path
 from nvwave import WavePlayer, AudioPurpose 
 import numpy as np 
-# import config # <-- REMOVED
-import config # <--- NEW: Needed to retrieve the saved voice
+import config
 
 # --- Essential NVDA Core Imports ---
 from logHandler import log
