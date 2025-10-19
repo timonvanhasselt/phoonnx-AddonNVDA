@@ -32,10 +32,21 @@ log.debug("PHOONNX DEBUG: __init__.py has started execution.")
 # Path calculation for the root of the add-on (Two levels up from synthDrivers/phoonnx)
 ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
 
-# --- Python Search Path Configuration (KEEP for bundled libs) ---
+# --- Python Search Path Configuration (CRUCIAL) ---
+
+# 1. Add the root of the add-on (to be able to import 'phoonnx' and voiceSelector)
+if ADDON_ROOT_DIR not in sys.path:
+    sys.path.insert(0, ADDON_ROOT_DIR)
+
+# 2. Add the separate libs folder (if used for other dependencies)
 PHOONNX_LIBS_PATH = os.path.join(ADDON_ROOT_DIR, "phoonnx_libs")
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
+
+# IMPORTS FOR FIRST-RUN LOGIC
+from . import voiceSelector 
+# MODIFIED: Use 'initDone' as the key, as requested.
+FIRST_RUN_KEY = "initDone" # Key for NVDA config
 
 # --- Global Exception Definition ---
 class PhoonnxException(Exception): pass
@@ -411,7 +422,37 @@ class SynthDriver(BaseSynthDriver):
         SynthDriver._AVAILABLE_VOICES_CONFIG = load_voice_configs()
 
         if self.check():
-            # self._get_voice() # <--- REMOVED: The NVDA core calls the getter/setter later.
+            
+            # --- START FIRST RUN LOGIC (SAFE IMPLEMENTATION) ---
+            
+            # Ensure the driver's configuration section exists
+            if self.name not in config.conf["speech"]:
+                config.conf["speech"][self.name] = {}
+            
+            # Retrieve the configuration section
+            synth_config = config.conf["speech"][self.name]
+            
+            # Check if the first-run is already completed with the key 'initDone'
+            if not synth_config.get(FIRST_RUN_KEY, False):
+                log.info(f"Phoonnx: First run detected ({FIRST_RUN_KEY}=False). Initiating voice selection.")
+                
+                def deferred_voice_selection():
+                    """Safely executes the voice selection dialog after the GUI is initialized."""
+                    try:
+                        import wx 
+                        wx.CallAfter(voiceSelector.run_voice_selection)
+                        log.info("Phoonnx: Deferred voice selection scheduled successfully.")
+                    except Exception as e:
+                        log.error(f"Phoonnx: Failed to schedule voice selection via wx.CallAfter: {e}")
+
+                # Use threading.Timer to delay the wx.CallAfter call by a fraction of a second (0.5s).
+                threading.Timer(0.5, deferred_voice_selection).start()
+                    
+                # Mark the first-run as complete and save the config
+                synth_config[FIRST_RUN_KEY] = True
+                config.conf.save()
+                log.info(f"Phoonnx: First run logic completed and marked ({FIRST_RUN_KEY}=True).")
+            # --- END FIRST RUN LOGIC ---
 
             self._worker_thread = _SynthQueueThread(driver=self)
             self._worker_thread.start()
@@ -604,8 +645,6 @@ class SynthDriver(BaseSynthDriver):
                 current_rate = item.value
             elif isinstance(item, (PitchCommand, VolumeCommand, BreakCommand, IndexCommand)):
                 pass
-
-        if not text: return
 
         nvda_rate = current_rate
         length_scale = 1.0 / (nvda_rate / 50.0)
