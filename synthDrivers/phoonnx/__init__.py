@@ -10,8 +10,7 @@ from pathlib import Path
 import os.path
 from nvwave import WavePlayer, AudioPurpose 
 import numpy as np 
-# import config # <-- VERWIJDERD
-import config # <--- NIEUW: Nodig voor het ophalen van de opgeslagen stem
+import config
 
 # --- Essential NVDA Core Imports ---
 from logHandler import log
