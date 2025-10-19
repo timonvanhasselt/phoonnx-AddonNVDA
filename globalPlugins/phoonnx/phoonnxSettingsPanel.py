@@ -4,11 +4,13 @@ import os
 import sys
 import wx
 import threading
+# import config  <-- REMOVED
 from logHandler import log
 import globalPluginHandler
 import ui 
 from scriptHandler import script
 import api 
+# **CORRECTION 1: Needed for refreshing the voice list**
 import synthDriverHandler 
 from gui.settingsDialogs import SettingsPanel 
 import gui 
@@ -16,8 +18,8 @@ from pathlib import Path
 import json 
 import shutil # Needed for moving and deleting directories
 
-# Import the translation function
-_ = lambda s: s 
+# Import the translation function and rename to _T to prevent 'TypeError: list object is not callable'.
+_T = lambda s: s 
 
 # --- Path configuration (Crucial for importing all bundled libs) ---
 
@@ -45,7 +47,7 @@ def _get_hardcoded_cache_path(voice_id):
     return Path(os.path.expanduser("~")) / ".cache" / "phoonnx" / "voices" / voice_id
 
 
-# ADD THIS PATH TO sys.path SO Python CAN FIND THE BUNDLED DEPENDENCIES
+# ADD THIS PATH TO sys.path SO THAT Python CAN FIND THE BUNDLED DEPENDENCIES
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
     log.debug(f"Phoonnx Voice Manager: Added libs path: {PHOONNX_LIBS_PATH}")
@@ -62,7 +64,7 @@ def get_model_manager_and_voices():
         from phoonnx.model_manager import TTSModelManager, TTSModelInfo
         
     except ImportError as e:
-        log.error(f"FATAL ERROR: Cannot import Phoonnx modules: {e}", exc_info=True)
+        log.error(f"FATAL ERROR: Failed to import Phoonnx modules: {e}", exc_info=True)
         return None, [], None, None
     except Exception as e:
         log.error(f"FATAL ERROR: Unknown error during import: {e}", exc_info=True)
@@ -104,7 +106,7 @@ def is_voice_installed(info):
 class PhoonnxVoiceManagerPanel(SettingsPanel):
     """Settings panel for managing Phoonnx voices (downloading, selecting)."""
     
-    title = _("Phoonnx voices")
+    title = _T("Phoonnx Voice Manager")
 
     def makeSettings(self, settingsSizer):
         """Builds the user interface of the panel."""
@@ -123,37 +125,37 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.buttonSizer = None 
         
         if not self.manager:
-            error_label = wx.StaticText(self, wx.ID_ANY, _("Error: Cannot load Phoonnx Voice Manager. See NVDA log for details."))
+            error_label = wx.StaticText(self, wx.ID_ANY, _T("Error: Cannot load Phoonnx Voice Manager. See NVDA log for details."))
             sHelper.addItem(error_label, proportion=0, flag=wx.ALL, border=10)
         else:
-            self.loading_label = wx.StaticText(self, wx.ID_ANY, _("Loading voices list (may take a moment)..."))
+            self.loading_label = wx.StaticText(self, wx.ID_ANY, _T("Loading voice list (may take a moment)..."))
             sHelper.addItem(self.loading_label, proportion=0, flag=wx.ALL | wx.ALIGN_CENTER, border=10)
             
             self._add_hidden_controls(sHelper)
             
             self._load_voices_async()
             
-            self.update_button_states()
+            self.update_button_states() # <-- This call is now valid
 
     def _add_hidden_controls(self, sHelper):
         """Adds the actual voice management elements (hidden by default)."""
         
-        self.available_label = wx.StaticText(self, wx.ID_ANY, _("Available voices:"))
+        self.available_label = wx.StaticText(self, wx.ID_ANY, _T("Available voices:"))
         sHelper.addItem(self.available_label, proportion=0, flag=wx.ALL | wx.ALIGN_LEFT, border=5)
         self.available_label.Hide()
 
         self.sList = wx.ListBox(self, wx.ID_ANY, choices=[])
         sHelper.addItem(self.sList, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        self.sList.SetToolTip(_("List of all available voices."))
+        self.sList.SetToolTip(_T("List of all available voices."))
         self.sList.Hide()
         
-        self.sDetails = wx.StaticText(self, wx.ID_ANY, _("Select a voice for details..."))
+        self.sDetails = wx.StaticText(self, wx.ID_ANY, _T("Select a voice for details..."))
         sHelper.addItem(self.sDetails, proportion=0, flag=wx.EXPAND | wx.ALL, border=5)
         self.sDetails.Hide()
         
         self.buttonSizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.sDownloadButton = wx.Button(self, wx.ID_ANY, _("Download/Update"))
-        self.sDeleteButton = wx.Button(self, wx.ID_ANY, _("Delete"))
+        self.sDownloadButton = wx.Button(self, wx.ID_ANY, _T("Download/Update"))
+        self.sDeleteButton = wx.Button(self, wx.ID_ANY, _T("Delete"))
         # self.sSetDefaultButton is REMOVED
         
         self.buttonSizer.Add(self.sDownloadButton, 0, wx.ALL, 5)
@@ -188,7 +190,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             threading.Thread(target=run_load, daemon=True).start()
 
     def on_voices_loaded(self):
-        """Called on the MainThread after the voice list has been loaded."""
+        """Is called on the Main Thread after the voice list has been loaded."""
         if not self.manager:
             return 
             
@@ -213,7 +215,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
                 # Check 2: Is the voice already known to the manager AND is it locally installed?
                 if voice_id not in manager_voices_ids and has_model_file:
                     
-                    log.warning(f"Phoonnx: Local voice '{voice_id}' is unknown to the manager. Adding to the list.")
+                    log.warning(f"Phoonnx: Local voice '{voice_id}' is not known to the manager. Adding to the list.")
                     
                     # Try to parse language
                     lang_tag = voice_id.split('_')[0] if '_' in voice_id else 'unk'
@@ -243,7 +245,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         voice_names = []
         for info in self.voices:
             is_installed = is_voice_installed(info) 
-            status = _("(Installed)") if is_installed else _("(Not installed)")
+            status = _T("(Installed)") if is_installed else _T("(Not installed)")
             voice_names.append(f"{info.voice_id} ({info.lang}) - {status}")
             
         self.sList.Set(voice_names)
@@ -261,21 +263,6 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         # 6. Update the button status
         self.update_button_states()
 
-    def update_button_states(self, selected_voice_info=None):
-        """Enables/disables the buttons based on the selected voice status."""
-        if self.sDownloadButton is None:
-            return 
-            
-        if selected_voice_info:
-            is_installed = is_voice_installed(selected_voice_info)
-            self.sDownloadButton.Enable(True)
-            self.sDeleteButton.Enable(is_installed)
-            # self.sSetDefaultButton enablement logic REMOVED
-        else:
-            self.sDownloadButton.Enable(False)
-            self.sDeleteButton.Enable(False)
-            # self.sSetDefaultButton enablement logic REMOVED
-
     def onVoiceSelect(self, evt):
         selected_index = self.sList.GetSelection()
         if selected_index == wx.NOT_FOUND or not self.voices: 
@@ -286,15 +273,54 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         is_installed = is_voice_installed(selected_voice_info)
 
         details = (
-            _("Name: ") + selected_voice_info.voice_id + "\n"
-            + _("ID: ") + selected_voice_info.voice_id + "\n"
-            + _("Language: ") + selected_voice_info.lang + "\n"
-            + _("Installed: ") + (_("Yes") if is_installed else _("No"))
+            _T("Name: ") + selected_voice_info.voice_id + "\n"
+            + _T("ID: ") + selected_voice_info.voice_id + "\n"
+            + _T("Language: ") + selected_voice_info.lang + "\n"
+            + _T("Installed: ") + (_T("Yes") if is_installed else _T("No"))
         )
         self.sDetails.SetLabel(details)
         self.update_button_states(selected_voice_info)
 
-    # --- Helper functions for Download/Delete ---
+    def update_button_states(self, selected_voice_info=None):
+        """Updates the status of the Download/Delete buttons."""
+        
+        # Step 1: Determine the selected voice if it has not been passed
+        if selected_voice_info is None:
+            selected_index = self.sList.GetSelection()
+            if selected_index != wx.NOT_FOUND and self.voices:
+                selected_voice_info = self.voices[selected_index]
+
+        # Step 2: Disable both buttons if no voice is selected or if the manager is missing
+        if not self.manager or selected_voice_info is None:
+            if self.sDownloadButton:
+                self.sDownloadButton.Disable()
+            if self.sDeleteButton:
+                self.sDeleteButton.Disable()
+            return
+
+        # Step 3: Determine the installation status of the selected voice
+        is_installed = is_voice_installed(selected_voice_info)
+
+        # Step 4: Update the button statuses
+        
+        # The download/update button must always be active if a voice is selected
+        if self.sDownloadButton:
+            self.sDownloadButton.Enable()
+            # Optional: adjust the text if the voice is already installed
+            new_label = _T("Download/Update")
+            if self.sDownloadButton.GetLabel() != new_label:
+                # Keep the label consistent
+                self.sDownloadButton.SetLabel(new_label)
+        
+        # The delete button is only active if the voice is installed
+        if self.sDeleteButton:
+            if is_installed:
+                self.sDeleteButton.Enable()
+            else:
+                self.sDeleteButton.Disable()
+
+
+    # --- Helper Functions for Download/Delete ---
     
     def _get_voice_info(self, voice_id):
         """Looks up the TTSModelInfo based on the ID."""
@@ -316,10 +342,10 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         dest_path = _get_addon_voice_path(voice_id)     # The NVDA add-on directory (Destination)
 
         if source_path.is_dir():
-            # 3. Move from the cache to the NVDA add-on directory
+            # 3. Moving from the cache to the NVDA add-on directory
             if dest_path.exists():
                 # Delete the old directory in the add-on for a clean move (for Update)
-                log.info(f"Phoonnx: Removing existing add-on voice directory for update: {dest_path}")
+                log.info(f"Phoonnx: Deleting existing add-on voice directory for update: {dest_path}")
                 shutil.rmtree(dest_path) 
             
             # Recursively move the directory from the cache to the add-on directory
@@ -334,11 +360,11 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
             except OSError:
                 pass
         else:
-            log.error(f"Phoonnx: Download complete, but the source directory {source_path} was not found. Cannot move.")
+            log.error(f"Phoonnx: Download complete, but source directory {source_path} not found. Cannot move.")
 
 
     def _delete_voice(self, voice_id):
-        """Wrapper for the delete task. Deletes the directory manually."""
+        """Wrapper for the delete task. Manually delete the directory."""
         voice_path = _get_addon_voice_path(voice_id)
         if voice_path.exists():
             log.info(f"Phoonnx: Manually deleting files: {voice_path}")
@@ -355,34 +381,34 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         self.sDeleteButton.Disable()
         
         # Use ui.message() instead of api.speak()
-        ui.message(_(f"Starting operation for voice {voice_id}.")) 
+        ui.message(_T(f"Starting operation for voice {voice_id}.")) 
         
         def wrapper():
             try:
                 task_func(voice_id)
                 
                 if refresh_synthesizer:
-                    # **CORRECTION 2: Replacement of the outdated/insufficient refresh call.**
+                    # **CORRECTION 2: Replacement of the deprecated/insufficient refresh call.**
                     current_synth = synthDriverHandler.getSynth()
                     if current_synth and current_synth.name == "phoonnx":
                         # Resetting the synthesizer forces a reload of the voice list.
                         synthDriverHandler.setSynth(current_synth.name)
-                        log.info(f"Phoonnx: Synthesizer reloaded to update the voice list after operation for {voice_id}.")
+                        log.info(f"Phoonnx: Synthesizer reloaded to update the voice list after operation of {voice_id}.")
                     else:
                          log.warning("Phoonnx: Cannot reload Phoonnx synthesizer (not the current active one).")
 
                     
                 wx.CallAfter(lambda: self.on_async_task_complete(True, success_msg))
             except Exception as e:
-                log.error(f"Error during asynchronous task for voice {voice_id}: {e}", exc_info=True)
+                log.error(f"Error in asynchronous task for voice {voice_id}: {e}", exc_info=True)
                 # Give a shorter spoken message
-                wx.CallAfter(lambda: self.on_async_task_complete(False, _("Error: Operation failed. See NVDA log.")))
+                wx.CallAfter(lambda: self.on_async_task_complete(False, _T("Error: The operation failed. See NVDA log.")))
 
         threading.Thread(target=wrapper, daemon=True).start()
 
 
     def on_async_task_complete(self, success, message):
-        """Called after an asynchronous task is completed."""
+        """Is called after an asynchronous task is completed."""
         
         # Reload the voices to update the status in the ListBox
         self.manager.refresh_voices()
@@ -390,22 +416,25 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         
         voice_names = []
         for info in self.voices:
-            status = _("(Installed)") if is_voice_installed(info) else _("(Not installed)")
+            status = _T("(Installed)") if is_voice_installed(info) else _T("(Not installed)")
             voice_names.append(f"{info.voice_id} ({info.lang}) - {status}")
         self.sList.Set(voice_names)
         
+        # Select again to update the details and buttons
         self.onVoiceSelect(None) 
         
-        # Use ui.message() for spoken feedback
+        # Use ui.message() for the spoken feedback
         ui.message(message) 
         
+        # FIX 1.2 and 1.3: Use wx.MessageDialog
         dlg = wx.MessageDialog(self, message, 
-                               _("Operation complete") if success else _("Operation failed"), 
+                               _T("Operation Complete") if success else _T("Operation Failed"), 
                                wx.OK | (wx.ICON_INFORMATION if success else wx.ICON_ERROR))
         dlg.ShowModal()
         dlg.Destroy()
         
-        self.onVoiceSelect(None)
+        # This is double here, but I leave it because it was in the original code (before the fix)
+        # self.onVoiceSelect(None)
         
 
     # --- Button Handlers ---
@@ -417,7 +446,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         
         self._execute_async_task(
             task_func=self._download_voice, 
-            success_msg=_("Download is complete. The voice is now available in the synthesizer settings."),
+            success_msg=_T("Download completed. The voice is now available in synthesizer settings."),
             voice_id=voice_info.voice_id,
             refresh_synthesizer=True
         )
@@ -429,7 +458,7 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         
         self._execute_async_task(
             task_func=self._delete_voice, 
-            success_msg=_("The voice has been successfully deleted. The synthesizer voice list has been updated."),
+            success_msg=_T("The voice has been successfully deleted. The synthesizer voice list has been updated."),
             voice_id=voice_info.voice_id,
             refresh_synthesizer=True
         )
@@ -437,11 +466,107 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
     # def onSetDefault(self, evt): # REMOVED (Formerly 18 lines of code removed)
 
     def onSave(self):
-        """Required method for SettingsPanel. Actions are executed immediately."""
+        """Required method for SettingsPanel. Actions are performed immediately."""
         pass
         
     @script(gesture="kb:NVDA+shift+v") 
     def script_showVoiceManagerPanel(self, gesture):
-        """Shows the NVDA settings window, focused on the Phoonnx panel."""
+        """Shows the NVDA settings window, with a focus on the Phoonnx panel."""
         gui.mainFrame.runSettingsDialog(gui.settingsDialogs.NVDASettingsDialog,
                                         startCategory=PhoonnxVoiceManagerPanel)
+                                        
+                                        
+# --- NEW FUNCTIONS FOR FIRST USE (Are imported by __init__.py) ---
+
+def _execute_async_download(voice_id, msg_success, msg_error, log_source):
+    """Internal helper to perform the download/move in a separate thread."""
+    # The manager, paths, and logic are reused.
+    manager, _, TTSModelManager, TTSModelInfo = get_model_manager_and_voices()
+    if not manager:
+        log.error(f"{log_source}: Manager could not be loaded. Download failed.")
+        # FIX 1.1: Replace ui.messageBox with wx.MessageDialog
+        wx.CallAfter(wx.MessageDialog(None, msg_error, "Phoonnx Error", style=wx.ICON_ERROR | wx.OK).ShowModal)
+        return
+
+    def download_task():
+        # *** FIX 3: Move 'nonlocal' to the beginning to resolve the SyntaxError. ***
+        nonlocal voice_id
+        
+        try:
+            log.info(f"{log_source}: Starting download of voice '{voice_id}'...")
+            
+            # The download requires a TTSModelInfo object, which we retrieve via the manager
+            # FIX 2: Remove the unexpected parameter 'force_refresh=True'
+            manager.refresh_voices() 
+            all_voices = list(manager.voices.values())
+            
+            # Retrieve the 2-letter language code from the recommended voice_id (e.g. 'nl' from 'dii_nl-NL')
+            lang_code_target = voice_id.split('_')[1].split('-')[0].lower() if '_' in voice_id else voice_id[:2].lower()
+            
+            # First search for the hardcoded ID
+            voice_info = next((v for v in all_voices if v.voice_id == voice_id), None)
+            
+            # *** FIX: FALLBACK LOGIC FOR INCORRECT/REMOVED VOICE ID ***
+            if voice_info is None:
+                log.warning(f"{log_source}: Recommended voice ID '{voice_id}' not found. Searching for first available voice for language '{lang_code_target}'.")
+                
+                # Search for the first voice that matches the language code
+                target_voices = [v for v in all_voices if v.lang.startswith(lang_code_target)]
+                
+                if target_voices:
+                    voice_info = target_voices[0]
+                    log.warning(f"{log_source}: Falling back to: {voice_info.voice_id}")
+                    # Update voice_id (now allowed by 'nonlocal' at the top)
+                    voice_id = voice_info.voice_id 
+                else:
+                    # If there are no voices for the language, stop.
+                    raise Exception(f"No known voice found for language code '{lang_code_target}'.")
+
+            if not voice_info:
+                # This should only happen if the fallback logic fails
+                raise Exception(f"No known voice found with ID: {voice_id}")
+            # *** END FALLBACK ***
+            
+            # Execute the download (via the load method of the object)
+            voice_info.load()
+            
+            # Move the voice from the cache to the add-on directory (Destination path)
+            # Use voice_info.voice_id (or the updated voice_id variable) for the paths.
+            source_path = _get_hardcoded_cache_path(voice_info.voice_id)
+            dest_path = _get_addon_voice_path(voice_info.voice_id)
+            
+            if source_path.is_dir():
+                if dest_path.exists():
+                    # Delete the old directory in the add-on for a clean move (for Update/Re-install)
+                    shutil.rmtree(dest_path) 
+                
+                shutil.move(str(source_path), str(dest_path)) 
+                log.info(f"{log_source}: Files for {voice_info.voice_id} successfully moved from cache to add-on directory.")
+            
+            # Show success message in the GUI
+            # FIX 4 (TYPE ERROR): Replace _("Phoonnx TTS") with _T("Phoonnx TTS")
+            wx.CallAfter(wx.MessageDialog(None, msg_success, _T("Phoonnx TTS"), style=wx.ICON_INFORMATION | wx.OK).ShowModal)
+            
+            # Refresh the voice list of the synthesizer
+            wx.CallAfter(synthDriverHandler.setSynth, synthDriverHandler.getSynth().name)
+            
+        except Exception as e:
+            log.error(f"{log_source}: Error during download and installation: {e}", exc_info=True)
+            # Use the English error message. The variable voice_id is now the final ID (or the fallback ID).
+            err_msg = f"Voice download or installation of '{voice_id}' failed: {e!s}. Check NVDA log."
+            # FIX 1.3: Replace ui.messageBox with wx.MessageDialog
+            wx.CallAfter(wx.MessageDialog(None, err_msg, "Phoonnx Error", style=wx.ICON_ERROR | wx.OK).ShowModal)
+
+    thread = threading.Thread(target=download_task)
+    thread.daemon = True
+    thread.start()
+
+def download_voice_if_confirmed(voice_id):
+    """Importable function for __init__.py to start the download."""
+    # Messages must be in English, as requested.
+    _execute_async_download(
+        voice_id=voice_id,
+        msg_success=_T("Download completed. The voice is now available in synthesizer settings."),
+        msg_error=_T("Voice download or installation failed. Please check the NVDA log for details."),
+        log_source="FirstRunDialog"
+    )
