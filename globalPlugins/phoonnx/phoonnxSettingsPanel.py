@@ -4,13 +4,11 @@ import os
 import sys
 import wx
 import threading
-# import config  <-- VERWIJDERD
 from logHandler import log
 import globalPluginHandler
 import ui 
 from scriptHandler import script
 import api 
-# **CORRECTIE 1: Nodig voor het vernieuwen van de stemmenlijst**
 import synthDriverHandler 
 from gui.settingsDialogs import SettingsPanel 
 import gui 
@@ -448,3 +446,4 @@ class PhoonnxVoiceManagerPanel(SettingsPanel):
         gui.mainFrame.runSettingsDialog(gui.settingsDialogs.NVDASettingsDialog,
 
                                         startCategory=PhoonnxVoiceManagerPanel)
+
