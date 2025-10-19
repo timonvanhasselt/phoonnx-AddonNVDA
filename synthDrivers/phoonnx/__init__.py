@@ -2,12 +2,16 @@ import os
 import sys
 import threading
 from collections import OrderedDict
-from typing import OrderedDict as TOrderedDict, Optional, Set, Callable
+from typing import OrderedDict as TOrderedDict, Optional, Set, Callable, Dict, Any, List
 import queue
 import time
-
-# FIX: Import WavePlayer and AudioPurpose directly for the modern NVDA API (2025.3+)
-from nvwave import WavePlayer, AudioPurpose
+import json 
+from pathlib import Path 
+import os.path
+from nvwave import WavePlayer, AudioPurpose 
+import numpy as np 
+# import config # <-- VERWIJDERD
+import config # <--- NIEUW: Nodig voor het ophalen van de opgeslagen stem
 
 # --- Essential NVDA Core Imports ---
 from logHandler import log
@@ -21,20 +25,114 @@ from speech.commands import IndexCommand, PitchCommand, RateCommand, VolumeComma
 _ = lambda s: s
 
 # --- CRUCIAL CONFIGURATION ---
-VOICE_ID = "dii_nl-NL"
-MODEL_FILENAME = f"{VOICE_ID}.onnx"
-CONFIG_FILENAME = f"{VOICE_ID}.onnx.json"
+VOICE_CONFIG_FILE = "voices.json"
+DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
 
 log.debug("PHOONNX DEBUG: __init__.py has started execution.")
 
+# Padberekening voor de root van de add-on (Twee niveaus omhoog vanaf synthDrivers/phoonnx)
+ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
+
 # --- Python Search Path Configuration (KEEP for bundled libs) ---
-DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
-PHOONNX_LIBS_PATH = os.path.join(DRIVER_DIR, "phoonnx_libs")
+PHOONNX_LIBS_PATH = os.path.join(ADDON_ROOT_DIR, "phoonnx_libs")
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
 
 # --- Global Exception Definition ---
 class PhoonnxException(Exception): pass
+
+# --- FUNCTIE OM STEMCONFIGURATIES TE LADEN (AANGEPAST) ---
+def load_voice_configs() -> Dict[str, Dict[str, str]]:
+    """
+    Leest de beschikbare stemconfiguraties uit het JSON-bestand en scant de
+    lokale installatiemap voor platte en geneste bestandsnamen.
+    """
+    configs = {}
+    config_path = os.path.join(DRIVER_DIR, VOICE_CONFIG_FILE)
+    
+    # --- 1. Laad uit voices.json ---
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                configs = json.load(f)
+                log.info(f"Phoonnx: Successfully loaded {len(configs)} voice configurations from JSON.")
+        except json.JSONDecodeError as e:
+            log.critical(f"FATAL ERROR: Invalid JSON in voice configuration file: {e}")
+        except Exception as e:
+            log.critical(f"FATAL ERROR: Failed to read voice configuration file: {e}", exc_info=True)
+
+    # --- 2. Scan de Lokale Download Map (VOICE_INSTALL_DIR) op platte en geneste bestanden ---
+    VOICE_INSTALL_DIR = Path(os.path.join(ADDON_ROOT_DIR, 'synthDrivers', 'phoonnx', 'voices'))
+    DRIVER_PATH = Path(DRIVER_DIR)
+    
+    if VOICE_INSTALL_DIR.is_dir():
+        log.info(f"Phoonnx: Start met scannen van platte en geneste stembestanden in: {VOICE_INSTALL_DIR}")
+        
+        # 2a. Plat files in voices/ (e.g. dii_nl-NL.onnx)
+        flat_model_files = list(VOICE_INSTALL_DIR.glob("*.onnx")) + list(VOICE_INSTALL_DIR.glob("*.pt"))
+        
+        # 2b. Geneste files (recursief) (e.g. voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx)
+        # We zoeken naar 'model.onnx' en 'model.pt' in submappen.
+        nested_model_files = list(VOICE_INSTALL_DIR.rglob("model.onnx")) + list(VOICE_INSTALL_DIR.rglob("model.pt"))
+        
+        all_model_files = flat_model_files + nested_model_files
+        
+        for model_file in all_model_files:
+            
+            # Bepaal de structuur en de paden
+            if model_file.parent == VOICE_INSTALL_DIR:
+                # Structuur: voices/dii_nl-NL.onnx (Plat)
+                voice_id = model_file.stem
+                config_file = model_file.with_suffix(model_file.suffix + '.json') 
+                
+                # Relatieve paden: voices/dii_nl-NL.onnx
+                relative_model_path = os.path.join('voices', model_file.name)
+                relative_config_path = os.path.join('voices', config_file.name)
+                
+            else:
+                # Structuur: voices/.../StemID/model.onnx (Genest)
+                # De stem ID is de naam van de map die model.onnx bevat
+                voice_id = model_file.parent.name
+                config_file = model_file.parent / "model.json" 
+                
+                # Relatieve paden: vanaf DRIVER_DIR (synthDrivers/phoonnx)
+                # Voorbeeld: voices/OpenVoiceOS/pipertts_nl-NL_miro/model.onnx
+                relative_model_path = str(model_file.relative_to(DRIVER_PATH)).replace('\\', '/')
+                relative_config_path = str(config_file.relative_to(DRIVER_PATH)).replace('\\', '/')
+                
+            # Controleer of het configuratiebestand bestaat
+            if config_file.exists():
+                
+                # Afleiding van de taal-ID
+                parts = voice_id.split('_')
+                if len(parts) > 1:
+                    # Gebruik het deel na de eerste underscore, bv. 'nl-NL'
+                    lang_tag = '_'.join(parts[1:]) 
+                else:
+                    lang_tag = 'und' 
+                
+                if voice_id not in configs:
+                    # Voeg de lokaal gedownloade/geïnstalleerde stem toe
+                    configs[voice_id] = {
+                        "display_name": f"{voice_id} (Lokaal/Auto-detect)", 
+                        "language": lang_tag,
+                        "model_file": relative_model_path,
+                        "config_file": relative_config_path
+                    }
+                    log.info(f"Phoonnx: Lokale stem '{voice_id}' dynamisch toegevoegd. Pad: {relative_model_path}. Taal: {lang_tag}")
+                    
+                else:
+                    # Overschrijf de paden als de stem al in voices.json staat
+                    configs[voice_id]['model_file'] = relative_model_path
+                    configs[voice_id]['config_file'] = relative_config_path
+                    log.info(f"Phoonnx: Stem '{voice_id}' uit JSON BIJGEWERKT naar lokaal pad: {relative_model_path}")
+
+
+    if not configs:
+         log.critical("FATAL ERROR: Geen geldige stemconfiguraties gevonden.")
+
+    return configs
+
 
 def import_phoonnx():
     """
@@ -43,13 +141,10 @@ def import_phoonnx():
     try:
         from phoonnx.config import SynthesisConfig
         from phoonnx.voice import TTSVoice as OriginalTTSVoice, LOG
-        import numpy as np # <-- Lazy import of numpy
-
-        # We create a wrapper to inject the necessary methods
+        
         class PatchedVoice:
             """
             Wrapper around OriginalTTSVoice with the required synthesize_to_callback.
-            The NVDA driver will use this as the TTSVoice.
             """
 
             def __init__(self, original_voice: OriginalTTSVoice):
@@ -62,7 +157,7 @@ def import_phoonnx():
 
             @property
             def sample_rate(self):
-                # or self._original_voice.sample_rate if available
+                # of self._original_voice.sample_rate if available
                 return self._original_voice.config.sample_rate
 
             @property
@@ -89,16 +184,13 @@ def import_phoonnx():
                 original_voice = OriginalTTSVoice.load(model_path, config_path)
                 return PatchedVoice(original_voice)
 
-            # --- The Custom Callback Logic (your original code) ---
+            # --- The Custom Callback Logic ---
             def synthesize_to_callback(self,
                                        text: str,
                                        audio_callback: Callable,
                                        index_callback: Callable,
                                        config: Optional[SynthesisConfig] = None,
                                        speaker_id: Optional[int] = None):
-
-                # *** Your complete synthesis/chunking logic follows here: ***
-                # Ensure all self.calls (like self.phonemize) refer to the wrapper methods above.
 
                 if config is None: config = SynthesisConfig()
                 LOG.debug("text=%s", text)
@@ -107,8 +199,6 @@ def import_phoonnx():
                     if self.phonetic_spellings and config.enable_phonetic_spellings:
                         text = self.phonetic_spellings.apply(text)
                     if config.add_diacritics:
-                        # Must call the phonemizer here.
-                        # We can keep the PatchedVoice implementation from __init__.py because self.phonemizer forwards
                         text = self.phonemizer.add_diacritics(text, self.config.lang_code)
 
                     sentence_phonemes = self.phonemize(text)
@@ -155,18 +245,17 @@ def import_phoonnx():
 
         log.info("Phoonnx: TTSVoice and dependencies successfully imported (Wrapped).")
 
-        return PatchedVoice, SynthesisConfig # <--- NOW RETURN BOTH
+        return PatchedVoice, SynthesisConfig 
 
     except (ImportError, ModuleNotFoundError, AttributeError) as e:
         log.critical(f"FATAL ERROR: Failed to load Phoonnx or dependency. Check bundling: {e}", exc_info=True)
-        return None, None # <--- Return two None's on error
+        return None, None 
 
-# =========================================================================
-# ASYNCHRONOUS LOADING AND STREAMING LOGIC
-# =========================================================================
 
 class _VoiceLoaderThread(threading.Thread):
-    """Asynchronously loads the TTSVoice instance and the WavePlayer."""
+    """
+    Asynchronously loads the TTSVoice instance and the WavePlayer.
+    """
 
     def __init__(self, driver: 'SynthDriver', voice_id: str, model_path: str, config_path: str):
         super().__init__()
@@ -179,7 +268,6 @@ class _VoiceLoaderThread(threading.Thread):
     def run(self):
         log.info(f"Phoonnx ASYNC: Starting asynchronous loading of voice '{self.voice_id}'...")
         try:
-            # Now catch both returned values
             VoiceClass, SynthesisConfigClass = import_phoonnx()
 
             if VoiceClass is None or SynthesisConfigClass is None:
@@ -189,7 +277,6 @@ class _VoiceLoaderThread(threading.Thread):
             tts_voice = VoiceClass.load(self.model_path, self.config_path)
 
             samplesPerSec = 22050
-            # The PatchedVoice wrapper now has a 'sample_rate' property
             if hasattr(tts_voice, 'sample_rate'):
                 samplesPerSec = tts_voice.sample_rate
 
@@ -202,7 +289,6 @@ class _VoiceLoaderThread(threading.Thread):
 
             self.driver.tts_voice = tts_voice
             self.driver._player = player
-            # STORE THE LOADED CONFIG CLASS IN THE DRIVER
             self.driver._SynthesisConfig_class = SynthesisConfigClass
 
             log.info("Phoonnx ASYNC: Loading of TTSVoice and WavePlayer complete.")
@@ -210,8 +296,8 @@ class _VoiceLoaderThread(threading.Thread):
         except Exception as e:
             log.error(f"Phoonnx ASYNC: Failed to load voice '{self.voice_id}': {e}", exc_info=True)
             self.driver.tts_voice = None
-            self.driver._player = None
-            self.driver._SynthesisConfig_class = None # Ensure this is also None
+            self._player = None
+            self.driver._SynthesisConfig_class = None 
 
         finally:
             self.driver._voice_loaded_event.set()
@@ -234,7 +320,6 @@ class _SynthQueueThread(threading.Thread):
 
         while not self.stop_event.is_set():
             try:
-                # request is: (text, config, index_callback, player_ref, tts_voice) - 5 elements
                 request = self.driver._request_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
@@ -242,10 +327,8 @@ class _SynthQueueThread(threading.Thread):
             if self.stop_event.is_set(): break
 
             try:
-                # Unpack 5 elements (Refactor structure)
                 text, config, index_callback, player_ref, tts_voice = request
 
-                # Add debug log for better diagnostics (ADDED)
                 log.debug(f"Phoonnx QueueThread: Starting synthesis for: '{text[:20]}...'")
 
                 self.cancel_synthesis_event.clear()
@@ -290,7 +373,6 @@ class _SynthQueueThread(threading.Thread):
 class SynthDriver(BaseSynthDriver):
     """
     NVDA SynthDriver implementation for the Phoonnx TTS engine.
-    (Updated with clean structure and index callback logic from refactor)
     """
     name = "phoonnx"
     description = _("Phoonnx TTS Driver")
@@ -307,6 +389,7 @@ class SynthDriver(BaseSynthDriver):
         ]
     )
 
+    _AVAILABLE_VOICES_CONFIG: Dict[str, Dict[str, str]] = {}
     _availableVoicesCache: Optional[TOrderedDict[str, VoiceInfo]] = None
     _rate: int = 50
     _pitch: int = 50
@@ -314,7 +397,6 @@ class SynthDriver(BaseSynthDriver):
 
     def __init__(self):
         super(SynthDriver, self).__init__()
-        # Type hinting changed to the base class
         self.tts_voice: Optional[object] = None
         self._voice_id: Optional[str] = None
         self._player: Optional[WavePlayer] = None
@@ -326,8 +408,11 @@ class SynthDriver(BaseSynthDriver):
         self._voice_loaded_event = threading.Event()
         self._loader_thread: Optional[_VoiceLoaderThread] = None
 
+        # LADEN VAN DE CONFIGURATIES BIJ INITIALISATIE
+        SynthDriver._AVAILABLE_VOICES_CONFIG = load_voice_configs()
+
         if self.check():
-            self._get_voice()
+            # self._get_voice() # <--- VERWIJDERD: De NVDA-core roept de getter/setter later aan.
 
             self._worker_thread = _SynthQueueThread(driver=self)
             self._worker_thread.start()
@@ -336,67 +421,143 @@ class SynthDriver(BaseSynthDriver):
 
     @classmethod
     def check(cls) -> bool:
-        model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
-        config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
+        if not cls._AVAILABLE_VOICES_CONFIG:
+            cls._AVAILABLE_VOICES_CONFIG = load_voice_configs()
 
-        if not (os.path.exists(model_path) and os.path.exists(config_path)):
-            log.warning(f"Phoonnx check failed: Model or configuration file not found at expected location.")
+        if not cls._AVAILABLE_VOICES_CONFIG:
+            log.warning(f"Phoonnx check failed: No valid voice configurations loaded.")
             return False
 
         return True
 
     def _getAvailableVoices(self) -> TOrderedDict[str, VoiceInfo]:
-        """
-        Uses the correct call for VoiceInfo.
-        (Updated with more generic display name from refactor)
-        """
         if self._availableVoicesCache is None:
             self._availableVoicesCache = OrderedDict()
-            language = VOICE_ID.split('_')[-1] if '_' in VOICE_ID else None
-            # Use the more generic display name from the refactor
-            display_name = f"Phoonnx ({VOICE_ID.replace('_', ' ').upper()})"
-
-            self._availableVoicesCache[VOICE_ID] = VoiceInfo(VOICE_ID, display_name, language=language)
+            for voice_id, config in SynthDriver._AVAILABLE_VOICES_CONFIG.items():
+                if 'display_name' in config and 'language' in config:
+                    self._availableVoicesCache[voice_id] = VoiceInfo(
+                        voice_id, 
+                        config['display_name'], 
+                        language=config['language']
+                    )
+                else:
+                    log.warning(f"Phoonnx: Voice config for '{voice_id}' is incomplete and skipped.")
 
         return self._availableVoicesCache
 
     def _get_voice(self) -> Optional[str]:
-        if self._voice_id is None:
-            available_voices = self.availableVoices
-            if available_voices:
-                self._voice_id = list(available_voices.keys())[0]
-                if self.check():
-                    self._load_tts_voice()
+        available_voices = self.availableVoices
+        
+        # Als de stem nog niet is ingesteld, probeer de opgeslagen voorkeur op te halen.
+        if self._voice_id is None: 
+            
+            # 1. Probeer de door de gebruiker opgeslagen voorkeur op te halen via NVDA config
+            saved_voice_id = None
+            try:
+                # config.getSynthConfig(self) haalt het config-object voor deze driver op
+                saved_voice_id = config.getSynthConfig(self).voice
+                log.info(f"Phoonnx: Opgeslagen NVDA voorkeurstem: {saved_voice_id}")
+            except Exception:
+                log.warning("Phoonnx: Kon opgeslagen NVDA stem niet ophalen.")
+            
+            # 2. Bepaal de uiteindelijke stem-ID
+            if saved_voice_id and saved_voice_id in available_voices:
+                new_voice_id = saved_voice_id
+            elif available_voices:
+                # Val terug op de hardgecodeerde standaard of de eerste beschikbare
+                default_voice_id = "dii_nl-NL" # Hardcoded fallback
+                
+                if default_voice_id in available_voices:
+                    new_voice_id = default_voice_id
+                else:
+                    new_voice_id = list(available_voices.keys())[0]
+                
+                log.info(f"Phoonnx: Geen opgeslagen/geldige stem gevonden. Val terug op: {new_voice_id}")
+            else:
+                log.error("Phoonnx: Geen stemmen beschikbaar in de configuratie.")
+                return None
+
+            # 3. Laad de stem
+            self._voice_id = new_voice_id
+            if self.check():
+                self._load_tts_voice()
+                
+        # Zorg ervoor dat de stem opnieuw geladen wordt als de vorige lading mislukte (self.tts_voice is None)
+        elif self.tts_voice is None:
+             if self.check():
+                self._load_tts_voice()
+                
         return self._voice_id
 
     def _set_voice(self, value: str):
         if value not in self.availableVoices:
             log.warning(f"Phoonnx: Attempting to set invalid voice: {value}.")
             return
+        
+        # De BaseSynthDriver handelt het opslaan van de waarde af.
+        # Wij moeten alleen de stem intern wijzigen en laden.
         if self._voice_id != value:
             self._voice_id = value
+            self._voice_loaded_event.clear() 
+            self._loader_thread = None 
+            
             if self.check():
                 self._load_tts_voice()
 
     def _load_tts_voice(self):
-        if self._voice_id == VOICE_ID and not self._voice_loaded_event.is_set() and self._loader_thread is None:
+        voice_id = self._voice_id
+        if voice_id is None:
+            log.warning("Phoonnx: Attempted to load voice, but _voice_id is None.")
+            self._voice_loaded_event.set() 
+            return
+
+        voice_config = SynthDriver._AVAILABLE_VOICES_CONFIG.get(voice_id)
+        
+        if not voice_config or 'model_file' not in voice_config or 'config_file' not in voice_config:
+            log.error(f"Phoonnx: Voice configuration is invalid or incomplete for ID: {voice_id}. Cannot load.")
+            self.tts_voice = None
+            self._player = None
+            self._SynthesisConfig_class = None
+            self._voice_loaded_event.set()
+            return
+
+        model_file_relative = voice_config["model_file"]
+        config_file_relative = voice_config["config_file"]
+        
+        # --- PATH CONSTRUCTION (met Normalisatie) ---
+        model_path = os.path.normpath(os.path.join(DRIVER_DIR, model_file_relative))
+        config_path = os.path.normpath(os.path.join(DRIVER_DIR, config_file_relative))
+
+        log.info(f"Phoonnx: Probeert stem '{voice_id}' te laden. Modelpad: {model_path}")
+        
+        # Controleer of de bestanden bestaan
+        if not (os.path.exists(model_path) and os.path.exists(config_path)):
+            log.error(f"Phoonnx: FOUT: Kan model- of configuratiebestand niet vinden voor '{voice_id}'.")
+            
+            # CRUCIALE LOGGING: Toon de volledige paden die NIET gevonden zijn
+            if not os.path.exists(model_path):
+                 log.error(f"Phoonnx: Foutpad model: {model_path} (Bestand NIET GEVONDEN)")
+            if not os.path.exists(config_path):
+                 log.error(f"Phoonnx: Foutpad config: {config_path} (Bestand NIET GEVONDEN)")
+
+            self.tts_voice = None
+            self._player = None
+            self._SynthesisConfig_class = None
+            self._voice_loaded_event.set()
+            return
+
+        # Start het laadproces
+        if not self._voice_loaded_event.is_set():
             log.info(f"Phoonnx: Starting asynchronous loading for voice '{self._voice_id}'.")
-
-            model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
-            config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
-
+            
             self._loader_thread = _VoiceLoaderThread(
                 driver=self,
-                voice_id=self._voice_id,
-                model_path=model_path,
-                config_path=config_path
+                voice_id=voice_id,
+                model_path=model_path, 
+                config_path=config_path 
             )
             self._loader_thread.start()
 
-        elif self._voice_id != VOICE_ID:
-            self.tts_voice = None
-            self._player = None
-            self._SynthesisConfig_class = None # Also clear the config class on voice change
 
     def _get_rate(self) -> int: return self._rate
     def _set_rate(self, value: int): self._rate = value
@@ -415,25 +576,19 @@ class SynthDriver(BaseSynthDriver):
         return {v.language for v in self.availableVoices.values()}
 
     def _onIndexReached(self, index: Optional[int]):
-        """
-        Callback from the worker thread to notify NVDA.
-        """
         if index is not None:
             synthIndexReached.notify(synth=self, index=index)
         else:
-            # This notifies synthDoneSpeaking.
             synthDoneSpeaking.notify(synth=self)
 
     # --- Core Speech Control Functions ---
     def speak(self, speechSequence):
-        """
-        Adds a speech request to the queue.
-        """
-
-        # Wait until the TTS voice is fully loaded
+        
         if not self._voice_loaded_event.is_set():
-            log.info("Phoonnx: Waiting for voice loading to complete (First speech).")
-            self._voice_loaded_event.wait()
+            log.info("Phoonnx: Waiting for voice loading to complete (First speech or after voice change).")
+            if not self._voice_loaded_event.wait(timeout=1):
+                 log.error("Phoonnx: Voice loading timed out. Cannot speak.")
+                 return
             log.info("Phoonnx: Voice successfully loaded after waiting.")
 
         if not self.tts_voice or not self._player or not self._SynthesisConfig_class:
@@ -453,13 +608,11 @@ class SynthDriver(BaseSynthDriver):
 
         if not text: return
 
-        # CONFIGURATION (calculate speed)
         nvda_rate = current_rate
         length_scale = 1.0 / (nvda_rate / 50.0)
         length_scale = max(0.2, min(2.0, length_scale))
 
-        # Use the stored SynthesisConfig class
-        synthesis_config = self._SynthesisConfig_class( # <--- CORRECTION
+        synthesis_config = self._SynthesisConfig_class( 
             length_scale=length_scale,
             noise_scale=0.667,
             noise_w_scale=0.8,
@@ -467,7 +620,6 @@ class SynthDriver(BaseSynthDriver):
             add_diacritics=False
         )
 
-        # PLACE THE REQUEST IN THE QUEUE: (text, config, index_callback, player_ref, tts_voice)
         request = (text, synthesis_config, self._onIndexReached, self._player, self.tts_voice)
         self._request_queue.put(request)
 
@@ -500,13 +652,10 @@ class SynthDriver(BaseSynthDriver):
             self._worker_thread.stop_event.set()
             self._worker_thread.join(timeout=1)
 
-            # Warning if the thread doesn't shut down cleanly 
             if self._worker_thread.is_alive():
                 log.warning("Phoonnx: QueueThread did not shut down within 1 second. Continuing.")
 
         self.tts_voice = None
-        self._SynthesisConfig_class = None # Also clear the config class on termination
-
-log.debug("PHOONNX DEBUG: __init__.py complete. SynthDriver class is defined.")
+        self._SynthesisConfig_class = None 
 
 SynthDriver = SynthDriver
