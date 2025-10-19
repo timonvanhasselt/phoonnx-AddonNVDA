@@ -4,13 +4,11 @@ import os
 import sys
 import wx
 import threading
-# import config  <-- REMOVED
 from logHandler import log
 import globalPluginHandler
 import ui 
 from scriptHandler import script
 import api 
-# **CORRECTION 1: Needed for refreshing the voice list**
 import synthDriverHandler 
 from gui.settingsDialogs import SettingsPanel 
 import gui 
@@ -570,3 +568,4 @@ def download_voice_if_confirmed(voice_id):
         msg_error=_T("Voice download or installation failed. Please check the NVDA log for details."),
         log_source="FirstRunDialog"
     )
+
