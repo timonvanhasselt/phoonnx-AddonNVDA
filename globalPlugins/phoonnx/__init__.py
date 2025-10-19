@@ -10,29 +10,29 @@ addonHandler.initTranslation()
 
 PhoonnxVoiceManagerPanel = None
 try:
-    # Cruciale import van de klasse uit het .py bestand in dezelfde map
+    # Crucial import of the class from the .py file in the same directory
     from .phoonnxSettingsPanel import PhoonnxVoiceManagerPanel
-    log.info("Phoonnx Global Plugin: SUCCESS: PhoonnxVoiceManagerPanel succesvol geïmporteerd.")
+    log.info("Phoonnx Global Plugin: SUCCESS: PhoonnxVoiceManagerPanel successfully imported.")
 except ImportError as e:
-    # Dit zal de fout loggen als de import mislukt
-    log.critical(f"FATALE FOUT: Kan PhoonnxVoiceManagerPanel NIET importeren uit phoonnxSettingsPanel. Paneel zal niet verschijnen. Fout: {e}", exc_info=True)
+    # This will log the error if the import fails
+    log.critical(f"FATAL ERROR: Cannot import PhoonnxVoiceManagerPanel from phoonnxSettingsPanel. Panel will not appear. Error: {e}", exc_info=True)
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     """
-    De hoofdklasse die NVDA laadt en die het instellingenpaneel registreert.
+    The main class that NVDA loads and that registers the settings panel.
     """
     def __init__(self):
         super().__init__()
-        # De registratie van het paneel in NVDA's instellingen
+        # The registration of the panel in NVDA's settings
         if PhoonnxVoiceManagerPanel:
             gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(PhoonnxVoiceManagerPanel)
-            log.info("Phoonnx Global Plugin: Settings Panel succesvol GEREGISTREERD in NVDA.")
+            log.info("Phoonnx Global Plugin: Settings Panel successfully REGISTERED in NVDA.")
         else:
-            log.warning("Phoonnx Global Plugin: Settings Panel registratie OVERGESLAGEN (import mislukt).")
+            log.warning("Phoonnx Global Plugin: Settings Panel registration SKIPPED (import failed).")
 
     def terminate(self):
         super().terminate()
-        # Zorg ervoor dat het paneel wordt verwijderd bij het afsluiten
+        # Ensure the panel is removed upon shutdown
         if PhoonnxVoiceManagerPanel and PhoonnxVoiceManagerPanel in gui.settingsDialogs.NVDASettingsDialog.categoryClasses:
             gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(PhoonnxVoiceManagerPanel)
