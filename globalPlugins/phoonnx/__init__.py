@@ -20,11 +20,11 @@ except ImportError as e:
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     """
-    The main class that NVDA loads and that registers the settings panel.
+    The main class that NVDA loads and which registers the settings panel.
     """
     def __init__(self):
         super().__init__()
-        # The registration of the panel in NVDA's settings
+        # Registration of the panel in NVDA's settings
         if PhoonnxVoiceManagerPanel:
             gui.settingsDialogs.NVDASettingsDialog.categoryClasses.append(PhoonnxVoiceManagerPanel)
             log.info("Phoonnx Global Plugin: Settings Panel successfully REGISTERED in NVDA.")
@@ -33,6 +33,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 
     def terminate(self):
         super().terminate()
-        # Ensure the panel is removed upon shutdown
+        # Ensure the panel is removed upon termination
         if PhoonnxVoiceManagerPanel and PhoonnxVoiceManagerPanel in gui.settingsDialogs.NVDASettingsDialog.categoryClasses:
             gui.settingsDialogs.NVDASettingsDialog.categoryClasses.remove(PhoonnxVoiceManagerPanel)
