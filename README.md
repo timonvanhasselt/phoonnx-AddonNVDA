@@ -55,5 +55,18 @@ NVDA currently uses **Python 3.11.9 (32-bit for NVDA 2025.x)** or **Python 3.13.
 The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
 
 Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
-
+The folder structure looks like this:
+````
+Phoonnx TTS/
+├── bin/
+├── globalPlugins/
+├── phoonnx_libs/
+├── synthDrivers/
+│   └── phoonnx/
+│       └── __init__.py
+├── voices/
+├── installTasks.py
+├── manifest.ini
+└── voices.json
+`````
 
