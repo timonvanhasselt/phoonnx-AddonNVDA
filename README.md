@@ -17,8 +17,6 @@ Install the test add-on manually using the add-on file (`.nvda-addon`).
 4.  NVDA will ask if you want to install the add-on. Confirm the installation and follow the prompts.
 5.  NVDA will ask you to restart the screen reader. Do this to complete the installation.
 
-Note: espeak-NG has to be installed system-wide to use this add-on at the moment!
-
 ## ⚙️ Configuration
 
 After installation, you must select the Phoonnx synthesizer in NVDA:
@@ -28,6 +26,7 @@ After installation, you must select the Phoonnx synthesizer in NVDA:
 3.  Select Phoonnx TTS Driver" from the synthesizer combo box.
 4.  Press OK to save the settings.
 5.  You can now adjust the voice, rate, volume, and pitch via NVDA's Speech Settings.
+6.  Choose the Phoonnx Voice Settings panel to download more/other voices, update the voice list and/or remove voices from the cache. Voice models are stored in the users folder, for example C:\user\.cache\phoonnx\voices
 
 > **Note on Rate:** The add-on translates the NVDA rate setting (0-100) to the TTS model's `length_scale`. A default NVDA rate of **50** corresponds to a `length_scale` of **1.0** (normal speed). Lower rates result in a higher `length_scale` (slower speech), and higher rates result in a lower `length_scale` (faster speech).
 
@@ -37,45 +36,24 @@ To develop or bundle this add-on, you need to set up a specific Python environme
 
 ### 1. Python Environment Setup
 
-NVDA 2025.3 currently uses **Python 3.11.9 (32-bit)**. 
-NVDA 2026.1 (alpha) uses **Python 3.13.7 (64-bit)**
-You must use this exact versions to ensure library compatibility.
+NVDA currently uses **Python 3.11.9 (32-bit for NVDA 2025.x)** or **Python 3.13.x (64-bit for NVDA 2026.x). You must use this exact version to ensure library compatibility.
 
-1.  **Install Python 3.11.9 (32-bit) or 3.13.7 (64-bit)** for Windows.
-2.  **Create a Virtual Environment (venv):**
+1.  Install Python for Windows.
+2.  Create a Virtual Environment (venv):
     ```bash
-    py -3.11/3.13 -m venv phoonnx_venv
+    py -m venv phoonnx_venv
     phoonnx_venv\Scripts\activate
     ```
 3.  **Install the Phoonnx Package:**
     ```bash
-    pip install phoonnx
+    pip install phoonnx 
     ```
+    or `pip install git+https://github.com/TigreGotico/phoonnx` for the pre-releases
 
 ### 2. Bundling Libraries (`phoonnx_libs`)
 
 The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
 
-1.  Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
+Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
 
-The folder structure of the add-on needs to look like this:
-```
-`%APPDATA%\nvda\addons\phoonnx_tts_driver\`
-├── `manifest.ini`
-├── `phoonnx_libs/`            <-- needed libs for the add-on to import (moved from synthDrivers)
-├── `synthDrivers/`
-│   └── `phoonnx/`
-│       ├── `__init__.py`
-│       ├── voices             <-- the folder containing the downloaded voice models and configs
-```
 
-### 2. Model Files
-
-Voices can now be downloaded via the new settingspanel in NVDA. They can also be manually added to the voices folder of the NVDA addon.
-Note: a model + config file is needed.
-
-### 3. System Dependency (espeak-ng)
-
-The `phoonnx` package currently relies on system-wide installation of the **espeak-ng** binary for certain functionalities (e.g., text processing/phonemization).
-
-* You must **install espeak-ng system-wide** on your Windows development/testing machine.
