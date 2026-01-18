@@ -12,8 +12,33 @@ import os.path
 
 # --- PATH CONFIGURATION ---
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
+# ADDON_ROOT_DIR is the main folder: ...\addons\Phoonnx TTS\
 ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
 
+# --- ESPEAK-NG LIBRARIES CONFIGURATION ---
+BIN_DIR = os.path.join(ADDON_ROOT_DIR, "bin")
+ESPEAK_EXE = os.path.join(BIN_DIR, "espeak-ng.exe")
+ESPEAK_DATA = os.path.join(BIN_DIR, "espeak-ng-data")
+
+# ROBUST PATH INJECTION (Crucial for both 2025.3 and 2026+)
+if os.path.isdir(BIN_DIR):
+    # 1. Update the environment PATH (for subprocesses/executables)
+    os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+    
+    # 2. Modern Windows DLL loading (Required for Python 3.8+)
+    if hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(BIN_DIR)
+        except Exception:
+            pass
+
+    # 3. Espeak-ng specific environment variables
+    os.environ["ESPEAK_DATA_PATH"] = BIN_DIR  
+    os.environ["PHOONNX_ESPEAK_EXECUTABLE"] = ESPEAK_EXE
+    os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = os.path.join(BIN_DIR, "libespeak-ng.dll")
+    os.environ["PHONEMIZER_ESPEAK_PATH"] = BIN_DIR
+
+# Ensure libraries are in sys.path
 if ADDON_ROOT_DIR not in sys.path:
     sys.path.insert(0, ADDON_ROOT_DIR)
 
@@ -65,7 +90,6 @@ VOICES_ROOT = os.path.join(PHOONNX_CACHE_DIR, "voices")
 def chunk_text(text: str, max_len: int = 250) -> List[str]:
     if not text:
         return []
-    # Splitst op leestekens gevolgd door een spatie om natuurlijke zinsgrenzen te behouden
     sentences = re.split(r'(?<=[.!?])\s+', text)
     chunks = []
     current_chunk = ""
@@ -121,6 +145,11 @@ class PatchedVoice:
         try:
             if self._original_voice.phonetic_spellings and config.enable_phonetic_spellings:
                 text = self._original_voice.phonetic_spellings.apply(text)
+            
+            # RE-VERIFY environment at runtime to prevent "command not found" after restart
+            if BIN_DIR not in os.environ["PATH"]:
+                os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+
             sentence_phonemes = self._original_voice.phonemize(text)
             for phonemes in sentence_phonemes:
                 if not phonemes: continue
@@ -173,24 +202,19 @@ class _QueueThread(threading.Thread):
                         player.feed(chunk)
 
                 try:
-                    # Alleen synthetiseren als er tekst is
                     if text.strip():
                         chunks = chunk_text(text)
                         for chunk in chunks:
                             if self.cancel_event.is_set(): break
                             tts_voice.synthesize_to_callback(chunk, audio_callback, config=config)
 
-                    # Wacht tot de audio fysiek klaar is met afspelen voor dit tekstblok
                     if player and not self.cancel_event.is_set():
                         player.sync() 
 
-                    # Meld de index aan NVDA nadat de audio klaar is. 
-                    # Dit houdt de visuele cursor synchroon bij 'Alles Lezen'.
                     if last_index is not None and not self.cancel_event.is_set():
                         synthIndexReached.notify(synth=self.driver, index=last_index)
 
                 finally:
-                    # Laat NVDA weten dat we klaar zijn met dit item in de sequence
                     synthDoneSpeaking.notify(synth=self.driver)
                     self.request_queue.task_done()
             except queue.Empty:
@@ -206,6 +230,11 @@ class SynthDriver(BaseSynthDriver):
 
     def __init__(self):
         super().__init__()
+        log.info(f"Phoonnx: Initializing. Bin path: {BIN_DIR}")
+        
+        if not os.path.exists(ESPEAK_EXE):
+            log.error(f"Phoonnx: espeak-ng.exe NOT found at {ESPEAK_EXE}")
+
         self._current_voice_id = "" 
         self._voice_configs = load_voice_configs()
         self.tts_voice = self._player = None
@@ -263,8 +292,6 @@ class SynthDriver(BaseSynthDriver):
                 last_index = item.index
         
         combined_text = "".join(text_parts)
-        # Ook als er alleen een index is zonder tekst (bijv. witregels), 
-        # sturen we dit naar de queue voor correcte afhandeling.
         if not combined_text.strip() and last_index is None: 
             return
 
