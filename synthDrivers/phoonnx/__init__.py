@@ -12,6 +12,7 @@ import os.path
 
 # --- PATH CONFIGURATION ---
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
+# ADDON_ROOT_DIR is the main folder: ...\addons\Phoonnx TTS\
 ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
 
 # --- ESPEAK-NG LIBRARIES CONFIGURATION ---
@@ -19,18 +20,25 @@ BIN_DIR = os.path.join(ADDON_ROOT_DIR, "bin")
 ESPEAK_EXE = os.path.join(BIN_DIR, "espeak-ng.exe")
 ESPEAK_DATA = os.path.join(BIN_DIR, "espeak-ng-data")
 
+# ROBUST PATH INJECTION (Crucial for both 2025.3 and 2026+)
 if os.path.isdir(BIN_DIR):
+    # 1. Update the environment PATH (for subprocesses/executables)
     os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+    
+    # 2. Modern Windows DLL loading (Required for Python 3.8+)
     if hasattr(os, "add_dll_directory"):
         try:
             os.add_dll_directory(BIN_DIR)
         except Exception:
             pass
+
+    # 3. Espeak-ng specific environment variables
     os.environ["ESPEAK_DATA_PATH"] = BIN_DIR  
     os.environ["PHOONNX_ESPEAK_EXECUTABLE"] = ESPEAK_EXE
     os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = os.path.join(BIN_DIR, "libespeak-ng.dll")
     os.environ["PHONEMIZER_ESPEAK_PATH"] = BIN_DIR
 
+# Ensure libraries are in sys.path
 if ADDON_ROOT_DIR not in sys.path:
     sys.path.insert(0, ADDON_ROOT_DIR)
 
@@ -38,6 +46,7 @@ PHOONNX_LIBS_PATH = os.path.join(ADDON_ROOT_DIR, "phoonnx_libs")
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
 
+# --- CRITICAL FIX: MANUAL MODULE INJECTION ---
 try:
     import dateutil
     import dateutil.relativedelta
@@ -53,10 +62,12 @@ try:
 except Exception:
     pass
 
+# --- THIRD-PARTY IMPORTS ---
 import numpy as np 
 from nvwave import WavePlayer, AudioPurpose 
 import config
 
+# --- NVDA CORE IMPORTS ---
 from logHandler import log
 from synthDriverHandler import (
     SynthDriver as BaseSynthDriver,
@@ -67,9 +78,11 @@ from synthDriverHandler import (
 from speech.commands import IndexCommand, PitchCommand, RateCommand, VolumeCommand, BreakCommand
 _ = lambda s: s
 
+# --- PHOONNX SPECIFIC IMPORTS ---
 from phoonnx.voice import TTSVoice
 from phoonnx.config import SynthesisConfig
 
+# --- DIRECTORY SETUP ---
 USER_HOME = os.path.expanduser("~")
 PHOONNX_CACHE_DIR = os.path.join(USER_HOME, ".cache", "phoonnx")
 VOICES_ROOT = os.path.join(PHOONNX_CACHE_DIR, "voices")
@@ -135,6 +148,7 @@ class PatchedVoice:
             if self._original_voice.phonetic_spellings and config.enable_phonetic_spellings:
                 text = self._original_voice.phonetic_spellings.apply(text)
             
+            # RE-VERIFY environment at runtime to prevent "command not found" after restart
             if BIN_DIR not in os.environ["PATH"]:
                 os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
 
