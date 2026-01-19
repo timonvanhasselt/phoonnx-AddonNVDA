@@ -12,7 +12,6 @@ import os.path
 
 # --- PATH CONFIGURATION ---
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
-# ADDON_ROOT_DIR is the main folder: ...\addons\Phoonnx TTS\
 ADDON_ROOT_DIR = os.path.dirname(os.path.dirname(DRIVER_DIR))
 
 # --- ESPEAK-NG LIBRARIES CONFIGURATION ---
@@ -20,25 +19,18 @@ BIN_DIR = os.path.join(ADDON_ROOT_DIR, "bin")
 ESPEAK_EXE = os.path.join(BIN_DIR, "espeak-ng.exe")
 ESPEAK_DATA = os.path.join(BIN_DIR, "espeak-ng-data")
 
-# ROBUST PATH INJECTION (Crucial for both 2025.3 and 2026+)
 if os.path.isdir(BIN_DIR):
-    # 1. Update the environment PATH (for subprocesses/executables)
     os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
-    
-    # 2. Modern Windows DLL loading (Required for Python 3.8+)
     if hasattr(os, "add_dll_directory"):
         try:
             os.add_dll_directory(BIN_DIR)
         except Exception:
             pass
-
-    # 3. Espeak-ng specific environment variables
     os.environ["ESPEAK_DATA_PATH"] = BIN_DIR  
     os.environ["PHOONNX_ESPEAK_EXECUTABLE"] = ESPEAK_EXE
     os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = os.path.join(BIN_DIR, "libespeak-ng.dll")
     os.environ["PHONEMIZER_ESPEAK_PATH"] = BIN_DIR
 
-# Ensure libraries are in sys.path
 if ADDON_ROOT_DIR not in sys.path:
     sys.path.insert(0, ADDON_ROOT_DIR)
 
@@ -46,7 +38,6 @@ PHOONNX_LIBS_PATH = os.path.join(ADDON_ROOT_DIR, "phoonnx_libs")
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
 
-# --- CRITICAL FIX: MANUAL MODULE INJECTION ---
 try:
     import dateutil
     import dateutil.relativedelta
@@ -62,12 +53,10 @@ try:
 except Exception:
     pass
 
-# --- THIRD-PARTY IMPORTS ---
 import numpy as np 
 from nvwave import WavePlayer, AudioPurpose 
 import config
 
-# --- NVDA CORE IMPORTS ---
 from logHandler import log
 from synthDriverHandler import (
     SynthDriver as BaseSynthDriver,
@@ -78,11 +67,9 @@ from synthDriverHandler import (
 from speech.commands import IndexCommand, PitchCommand, RateCommand, VolumeCommand, BreakCommand
 _ = lambda s: s
 
-# --- PHOONNX SPECIFIC IMPORTS ---
 from phoonnx.voice import TTSVoice
 from phoonnx.config import SynthesisConfig
 
-# --- DIRECTORY SETUP ---
 USER_HOME = os.path.expanduser("~")
 PHOONNX_CACHE_DIR = os.path.join(USER_HOME, ".cache", "phoonnx")
 VOICES_ROOT = os.path.join(PHOONNX_CACHE_DIR, "voices")
@@ -125,7 +112,9 @@ def load_voice_configs() -> Dict[str, Any]:
                     "onnx_path": os.path.join(root, "model.onnx"),
                     "config_path": config_path,
                     "sample_rate": sample_rate,
-                    "inference": meta.get("inference", {})
+                    "inference": meta.get("inference", {}),
+                    "speaker_id_map": meta.get("speaker_id_map", {}),
+                    "num_speakers": meta.get("num_speakers", 1)
                 }
     except Exception as e:
         log.error(f"Phoonnx: Error scanning voices: {e}")
@@ -146,7 +135,6 @@ class PatchedVoice:
             if self._original_voice.phonetic_spellings and config.enable_phonetic_spellings:
                 text = self._original_voice.phonetic_spellings.apply(text)
             
-            # RE-VERIFY environment at runtime to prevent "command not found" after restart
             if BIN_DIR not in os.environ["PATH"]:
                 os.environ["PATH"] = BIN_DIR + os.pathsep + os.environ.get("PATH", "")
 
@@ -223,7 +211,6 @@ class _QueueThread(threading.Thread):
 class SynthDriver(BaseSynthDriver):
     name = "phoonnx"
     description = "Phoonnx TTS"
-    supportedSettings = (BaseSynthDriver.VoiceSetting(), BaseSynthDriver.RateSetting(), BaseSynthDriver.VolumeSetting())
 
     @classmethod
     def check(cls): return True
@@ -254,6 +241,22 @@ class SynthDriver(BaseSynthDriver):
         elif self._voice_configs:
             self.voice = list(self._voice_configs.keys())[0]
 
+    @property
+    def supportedSettings(self):
+        """Dynamically determine supported settings based on the current voice."""
+        settings = [
+            BaseSynthDriver.VoiceSetting(),
+            BaseSynthDriver.RateSetting(),
+            BaseSynthDriver.VolumeSetting()
+        ]
+        
+        # Check if the current voice has multiple speakers
+        cfg = self._voice_configs.get(self._current_voice_id)
+        if cfg and cfg.get("speaker_id_map") and len(cfg["speaker_id_map"]) > 1:
+            settings.insert(1, BaseSynthDriver.VariantSetting())
+            
+        return tuple(settings)
+
     def _get_availableVoices(self) -> OrderedDict[str, VoiceInfo]:
         self._voice_configs = load_voice_configs()
         voices = OrderedDict()
@@ -276,6 +279,24 @@ class SynthDriver(BaseSynthDriver):
         self.tts_voice = None
         _VoiceLoaderThread(self, voice_id, self._voice_configs[voice_id]).start()
 
+    def _get_availableVariants(self) -> OrderedDict[str, VoiceInfo]:
+        variants = OrderedDict()
+        cfg = self._voice_configs.get(self._current_voice_id)
+        if not cfg or not cfg.get("speaker_id_map"):
+            variants["0"] = VoiceInfo("0", _("Default"))
+            return variants
+        
+        sorted_speakers = sorted(cfg["speaker_id_map"].items(), key=lambda x: x[1])
+        for name, s_id in sorted_speakers:
+            variants[str(s_id)] = VoiceInfo(str(s_id), str(s_id))
+        return variants
+
+    def _get_variant(self):
+        return str(config.conf["speech"]["phoonnx"].get("variant", "0"))
+
+    def _set_variant(self, value):
+        config.conf["speech"]["phoonnx"]["variant"] = str(value)
+
     def _get_rate(self): return int(config.conf["speech"]["phoonnx"].get("rate", 50))
     def _set_rate(self, value): config.conf["speech"]["phoonnx"]["rate"] = int(value)
     def _get_volume(self): return int(config.conf["speech"]["phoonnx"].get("volume", 100))
@@ -297,10 +318,17 @@ class SynthDriver(BaseSynthDriver):
 
         inference = self._voice_configs[self._current_voice_id].get("inference", {})
         length_scale = inference.get("length_scale", 1.0) * (1.5 - (self.rate / 100.0) * 1.2)
+        
+        try:
+            speaker_id = int(config.conf["speech"]["phoonnx"].get("variant", 0))
+        except (ValueError, TypeError):
+            speaker_id = 0
+
         s_config = SynthesisConfig(
             length_scale=max(0.2, min(length_scale, 2.5)),
             noise_scale=inference.get("noise_scale", 0.667),
             noise_w_scale=inference.get("noise_w", 0.8),
+            speaker_id=speaker_id,
             volume=float(self.volume) / 100.0,
             enable_phonetic_spellings=True
         )
