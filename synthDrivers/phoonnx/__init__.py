@@ -237,24 +237,20 @@ class SynthDriver(BaseSynthDriver):
         
         last_voice = config.conf["speech"]["phoonnx"].get("voice")
         if last_voice and last_voice in self._voice_configs:
-            self.voice = last_voice
+            self._set_voice_internal(last_voice)
         elif self._voice_configs:
-            self.voice = list(self._voice_configs.keys())[0]
+            self._set_voice_internal(list(self._voice_configs.keys())[0])
 
     @property
     def supportedSettings(self):
-        """Dynamically determine supported settings based on the current voice."""
         settings = [
             BaseSynthDriver.VoiceSetting(),
             BaseSynthDriver.RateSetting(),
             BaseSynthDriver.VolumeSetting()
         ]
-        
-        # Check if the current voice has multiple speakers
         cfg = self._voice_configs.get(self._current_voice_id)
         if cfg and cfg.get("speaker_id_map") and len(cfg["speaker_id_map"]) > 1:
             settings.insert(1, BaseSynthDriver.VariantSetting())
-            
         return tuple(settings)
 
     def _get_availableVoices(self) -> OrderedDict[str, VoiceInfo]:
@@ -268,10 +264,40 @@ class SynthDriver(BaseSynthDriver):
         return voices
 
     def _get_voice(self): return self._current_voice_id
+    
     def _set_voice(self, voice_id):
+        self._set_voice_internal(voice_id)
+
+    def _set_voice_internal(self, voice_id):
         if not voice_id or voice_id not in self._voice_configs: return
         self._current_voice_id = voice_id
         config.conf["speech"]["phoonnx"]["voice"] = voice_id
+        
+        for attr in ("_availableVariants", "_supportedSettings", "_availableSpeakers"):
+            if hasattr(self, attr):
+                delattr(self, attr)
+
+        cfg = self._voice_configs[voice_id]
+        speaker_map = cfg.get("speaker_id_map", {})
+        
+        if speaker_map:
+            current_saved_variant = config.conf["speech"]["phoonnx"].get("variant")
+            valid_ids = [str(vid) for vid in speaker_map.values()]
+            
+            # If current variant is NOT valid for this new voice, reset it
+            if str(current_saved_variant) not in valid_ids:
+                new_variant = str(sorted(speaker_map.values())[0])
+                config.conf["speech"]["phoonnx"]["variant"] = new_variant
+        else:
+            config.conf["speech"]["phoonnx"]["variant"] = "0"
+
+        try:
+            import gui
+            if gui.mainFrame:
+                gui.mainFrame.pre_onSynthSettingsChange()
+        except:
+            pass
+
         if self._player:
             self._player.stop()
             self._player.close()
@@ -288,7 +314,8 @@ class SynthDriver(BaseSynthDriver):
         
         sorted_speakers = sorted(cfg["speaker_id_map"].items(), key=lambda x: x[1])
         for name, s_id in sorted_speakers:
-            variants[str(s_id)] = VoiceInfo(str(s_id), str(s_id))
+            display_name = f"{s_id} - {name}"
+            variants[str(s_id)] = VoiceInfo(str(s_id), display_name)
         return variants
 
     def _get_variant(self):
@@ -316,12 +343,20 @@ class SynthDriver(BaseSynthDriver):
         if not combined_text.strip() and last_index is None: 
             return
 
-        inference = self._voice_configs[self._current_voice_id].get("inference", {})
+        cfg = self._voice_configs.get(self._current_voice_id, {})
+        inference = cfg.get("inference", {})
         length_scale = inference.get("length_scale", 1.0) * (1.5 - (self.rate / 100.0) * 1.2)
         
         try:
-            speaker_id = int(config.conf["speech"]["phoonnx"].get("variant", 0))
-        except (ValueError, TypeError):
+            stored_variant = config.conf["speech"]["phoonnx"].get("variant", "0")
+            speaker_map = cfg.get("speaker_id_map", {})
+            valid_ids = list(speaker_map.values())
+            
+            if speaker_map and int(stored_variant) not in valid_ids:
+                speaker_id = valid_ids[0]
+            else:
+                speaker_id = int(stored_variant)
+        except (ValueError, TypeError, IndexError):
             speaker_id = 0
 
         s_config = SynthesisConfig(
@@ -347,6 +382,11 @@ class SynthDriver(BaseSynthDriver):
         if self._player: self._player.pause(switch)
 
     def terminate(self):
+        try:
+            config.conf.save()
+        except Exception as e:
+            log.error(f"Phoonnx: Failed to save config: {e}")
+            
         if self._player: self._player.close()
         self._worker_thread.stop_event.set()
         self._worker_thread.join(timeout=1)
