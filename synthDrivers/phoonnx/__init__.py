@@ -66,6 +66,7 @@ except Exception:
 import numpy as np 
 from nvwave import WavePlayer, AudioPurpose 
 import config
+from autoSettingsUtils.driverSetting import NumericDriverSetting, BooleanDriverSetting # Updated imports for boolean settings
 
 # --- NVDA CORE IMPORTS ---
 from logHandler import log
@@ -83,9 +84,22 @@ from phoonnx.voice import TTSVoice
 from phoonnx.config import SynthesisConfig
 
 # --- DIRECTORY SETUP ---
-USER_HOME = os.path.expanduser("~")
-PHOONNX_CACHE_DIR = os.path.join(USER_HOME, ".cache", "phoonnx")
-VOICES_ROOT = os.path.join(PHOONNX_CACHE_DIR, "voices")
+# Robust way to check for portable mode without importing nvdaHelper
+nvdaExecutableDir = os.path.dirname(sys.executable)
+portableConfigPath = os.path.join(nvdaExecutableDir, "userConfig")
+
+if os.path.exists(portableConfigPath):
+    # Portable mode
+    nvdaConfigPath = portableConfigPath
+else:
+    # Installed mode
+    appDataPath = os.environ.get("APPDATA")
+    nvdaConfigPath = os.path.join(appDataPath, "nvda")
+
+# Define the paths for Phoonnx
+PHOONNX_DATA_DIR = os.path.join(nvdaConfigPath, "phoonnx")
+VOICES_ROOT = os.path.join(PHOONNX_DATA_DIR, "voices")
+
 
 def chunk_text(text: str, max_len: int = 250) -> List[str]:
     if not text:
@@ -255,12 +269,18 @@ class SynthDriver(BaseSynthDriver):
         elif self._voice_configs:
             self._set_voice_internal(list(self._voice_configs.keys())[0])
 
+
     @property
     def supportedSettings(self):
         settings = [
             BaseSynthDriver.VoiceSetting(),
             BaseSynthDriver.RateSetting(),
-            BaseSynthDriver.VolumeSetting()
+            BaseSynthDriver.VolumeSetting(),
+            NumericDriverSetting("noise_scale", _("Voice randomness (noise_scale)"), False),
+            NumericDriverSetting("length_scale", _("Voice speed (length_scale)"), True),
+            NumericDriverSetting("noise_w", _("Phoneme randomness (noise_w)"), False),
+            BooleanDriverSetting("enable_phonetic_spellings", _("Apply pronunciation fixes"), True), # Added
+            BooleanDriverSetting("add_diacritics", _("Add diacritics (Arabic/Hebrew)"), False), # Added
         ]
         cfg = self._voice_configs.get(self._current_voice_id)
         if cfg and cfg.get("speaker_id_map") and len(cfg["speaker_id_map"]) > 1:
@@ -268,6 +288,7 @@ class SynthDriver(BaseSynthDriver):
         return tuple(settings)
 
     def _get_availableVoices(self) -> OrderedDict[str, VoiceInfo]:
+        # Rescan voices on request
         self._voice_configs = load_voice_configs()
         voices = OrderedDict()
         if not self._voice_configs:
@@ -287,6 +308,7 @@ class SynthDriver(BaseSynthDriver):
         self._current_voice_id = voice_id
         config.conf["speech"]["phoonnx"]["voice"] = voice_id
         
+        # Reset cached voice-specific settings
         for attr in ("_availableVariants", "_supportedSettings", "_availableSpeakers"):
             if hasattr(self, attr):
                 delattr(self, attr)
@@ -338,10 +360,42 @@ class SynthDriver(BaseSynthDriver):
     def _set_variant(self, value):
         config.conf["speech"]["phoonnx"]["variant"] = str(value)
 
+    # --- New Settings Getters/Setters ---
+    def _get_noise_scale(self):
+        return int(config.conf["speech"]["phoonnx"].get("noise_scale", 67))
+
+    def _set_noise_scale(self, value):
+        config.conf["speech"]["phoonnx"]["noise_scale"] = int(value)
+
+    def _get_length_scale(self):
+        return int(config.conf["speech"]["phoonnx"].get("length_scale", 100))
+
+    def _set_length_scale(self, value):
+        config.conf["speech"]["phoonnx"]["length_scale"] = int(value)
+
+    def _get_noise_w(self):
+        return int(config.conf["speech"]["phoonnx"].get("noise_w", 80))
+
+    def _set_noise_w(self, value):
+        config.conf["speech"]["phoonnx"]["noise_w"] = int(value)
+
     def _get_rate(self): return int(config.conf["speech"]["phoonnx"].get("rate", 50))
     def _set_rate(self, value): config.conf["speech"]["phoonnx"]["rate"] = int(value)
     def _get_volume(self): return int(config.conf["speech"]["phoonnx"].get("volume", 100))
     def _set_volume(self, value): config.conf["speech"]["phoonnx"]["volume"] = int(value)
+    
+    # Added Getters/Setters for new options
+    def _get_enable_phonetic_spellings(self):
+        return config.conf["speech"]["phoonnx"].get("enable_phonetic_spellings", True)
+
+    def _set_enable_phonetic_spellings(self, value):
+        config.conf["speech"]["phoonnx"]["enable_phonetic_spellings"] = value
+
+    def _get_add_diacritics(self):
+        return config.conf["speech"]["phoonnx"].get("add_diacritics", False) # Default set to False
+
+    def _set_add_diacritics(self, value):
+        config.conf["speech"]["phoonnx"]["add_diacritics"] = value
 
     def speak(self, speechSequence):
         if not self.tts_voice: return
@@ -359,7 +413,10 @@ class SynthDriver(BaseSynthDriver):
 
         cfg = self._voice_configs.get(self._current_voice_id, {})
         inference = cfg.get("inference", {})
-        length_scale = inference.get("length_scale", 1.0) * (1.5 - (self.rate / 100.0) * 1.2)
+        
+        # Apply rate to length_scale
+        base_length_scale = self._get_length_scale() / 100.0
+        length_scale = base_length_scale * (1.5 - (self.rate / 100.0) * 1.2)
         
         try:
             stored_variant = config.conf["speech"]["phoonnx"].get("variant", "0")
@@ -375,11 +432,12 @@ class SynthDriver(BaseSynthDriver):
 
         s_config = SynthesisConfig(
             length_scale=max(0.2, min(length_scale, 2.5)),
-            noise_scale=inference.get("noise_scale", 0.667),
-            noise_w_scale=inference.get("noise_w", 0.8),
+            noise_scale=self._get_noise_scale() / 100.0,
+            noise_w_scale=self._get_noise_w() / 100.0,
             speaker_id=speaker_id,
             volume=float(self.volume) / 100.0,
-            enable_phonetic_spellings=True
+            enable_phonetic_spellings=self._get_enable_phonetic_spellings(), # Updated
+            add_diacritics=self._get_add_diacritics() # Updated
         )
         self._request_queue.put((combined_text, s_config, last_index, self._player, self.tts_voice))
 
