@@ -16,8 +16,8 @@ class TestCheck:
 class TestVoices:
     def test_available_voices(self, driver, nvda_env):
         voices = driver.availableVoices
-        assert nvda_env.module.VOICE_ID in voices
-        assert voices[nvda_env.module.VOICE_ID].language == "nl-NL"
+        assert nvda_env.module.DEFAULT_VOICE_ID in voices
+        assert voices[nvda_env.module.DEFAULT_VOICE_ID].language == "nl-NL"
 
     def test_set_invalid_voice_ignored(self, driver):
         before = driver._get_voice()

@@ -22,11 +22,11 @@ try:
 except Exception:
     _ = lambda s: s
 
-VOICE_ID = "dii_nl-NL"
-MODEL_FILENAME = f"{VOICE_ID}.onnx"
-CONFIG_FILENAME = f"{VOICE_ID}.onnx.json"
+DEFAULT_VOICE_ID = "dii_nl-NL"
 
 DRIVER_DIR = os.path.dirname(os.path.abspath(__file__))
+# Voices dropped here by the user are picked up without reinstalling the add-on.
+VOICE_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "phoonnx", "voices")
 PHOONNX_LIBS_PATH = os.path.join(DRIVER_DIR, "phoonnx_libs")
 if PHOONNX_LIBS_PATH not in sys.path:
     sys.path.insert(0, PHOONNX_LIBS_PATH)
@@ -38,6 +38,54 @@ CHUNK_SIZE = 8192
 
 class PhoonnxException(Exception):
     pass
+
+
+def _voice_language(voice_id: str, config_path: str) -> Optional[str]:
+    """Best-effort language for a voice: the config's lang code, else the
+    ``name_ll-CC`` filename convention."""
+    try:
+        import json
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        for key in ("lang_code", "language", "lang"):
+            value = cfg.get(key)
+            if isinstance(value, str) and value:
+                return value
+            if isinstance(value, dict) and value.get("code"):
+                return value["code"]
+    except Exception:
+        pass
+    return voice_id.split("_")[-1] if "_" in voice_id else None
+
+
+def discover_voices() -> "OrderedDict[str, dict]":
+    """Find installed voices (``<id>.onnx`` + ``<id>.onnx.json`` pairs).
+
+    Scans the add-on directory (bundled voices) and the phoonnx voice cache.
+    Returns an ordered mapping of voice id to model/config paths + language,
+    with the bundled default voice first when present.
+    """
+    voices: "OrderedDict[str, dict]" = OrderedDict()
+    search_dirs = [DRIVER_DIR, VOICE_CACHE_DIR]
+    for directory in search_dirs:
+        if not os.path.isdir(directory):
+            continue
+        for fn in sorted(os.listdir(directory)):
+            if not fn.endswith(".onnx"):
+                continue
+            voice_id = fn[:-len(".onnx")]
+            model_path = os.path.join(directory, fn)
+            config_path = model_path + ".json"
+            if voice_id in voices or not os.path.exists(config_path):
+                continue
+            voices[voice_id] = {
+                "model": model_path,
+                "config": config_path,
+                "language": _voice_language(voice_id, config_path),
+            }
+    if DEFAULT_VOICE_ID in voices:
+        voices.move_to_end(DEFAULT_VOICE_ID, last=False)
+    return voices
 
 
 def nvda_rate_to_length_scale(rate: int) -> float:
@@ -188,12 +236,14 @@ def import_phoonnx():
 class _VoiceLoaderThread(threading.Thread):
     """Asynchronously loads the TTSVoice instance and the WavePlayer."""
 
-    def __init__(self, driver: 'SynthDriver', voice_id: str, model_path: str, config_path: str):
+    def __init__(self, driver: 'SynthDriver', voice_id: str, model_path: str, config_path: str,
+                 generation: int = 0):
         super().__init__()
         self.driver = driver
         self.voice_id = voice_id
         self.model_path = model_path
         self.config_path = config_path
+        self.generation = generation
         self.daemon = True
 
     def run(self):
@@ -213,18 +263,31 @@ class _VoiceLoaderThread(threading.Thread):
                 purpose=AudioPurpose.SPEECH
             )
 
+            if self.generation != self.driver._load_generation:
+                # A newer voice switch superseded this load; discard it.
+                player.close()
+                return
+
+            old_player = self.driver._player
             self.driver.tts_voice = tts_voice
             self.driver._player = player
             self.driver._SynthesisConfig_class = SynthesisConfigClass
+            if old_player is not None and old_player is not player:
+                try:
+                    old_player.close()
+                except Exception:
+                    pass
             log.info("Phoonnx ASYNC: Loading of TTSVoice and WavePlayer complete.")
 
         except Exception as e:
             log.error(f"Phoonnx ASYNC: Failed to load voice '{self.voice_id}': {e}", exc_info=True)
-            self.driver.tts_voice = None
-            self.driver._player = None
-            self.driver._SynthesisConfig_class = None
+            if self.generation == self.driver._load_generation:
+                self.driver.tts_voice = None
+                self.driver._player = None
+                self.driver._SynthesisConfig_class = None
         finally:
-            self.driver._voice_loaded_event.set()
+            if self.generation == self.driver._load_generation:
+                self.driver._voice_loaded_event.set()
 
 
 class _SynthQueueThread(threading.Thread):
@@ -350,6 +413,8 @@ class SynthDriver(BaseSynthDriver):
 
         self._voice_loaded_event = threading.Event()
         self._loader_thread: Optional[_VoiceLoaderThread] = None
+        self._load_generation: int = 0
+        self._voice_catalog = discover_voices()
 
         if self.check():
             self._get_voice()
@@ -358,55 +423,51 @@ class SynthDriver(BaseSynthDriver):
 
     @classmethod
     def check(cls) -> bool:
-        model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
-        config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
-        if not (os.path.exists(model_path) and os.path.exists(config_path)):
-            log.warning("Phoonnx check failed: Model or configuration file not found at expected location.")
+        if not discover_voices():
+            log.warning("Phoonnx check failed: no voice (.onnx + .onnx.json pair) found "
+                        f"in {DRIVER_DIR} or {VOICE_CACHE_DIR}.")
             return False
         return True
 
     def _getAvailableVoices(self) -> TOrderedDict[str, VoiceInfo]:
         if self._availableVoicesCache is None:
             self._availableVoicesCache = OrderedDict()
-            language = VOICE_ID.split('_')[-1] if '_' in VOICE_ID else None
-            display_name = f"Phoonnx ({VOICE_ID.replace('_', ' ').upper()})"
-            self._availableVoicesCache[VOICE_ID] = VoiceInfo(VOICE_ID, display_name, language=language)
+            for voice_id, info in self._voice_catalog.items():
+                display_name = f"Phoonnx ({voice_id.replace('_', ' ')})"
+                self._availableVoicesCache[voice_id] = VoiceInfo(
+                    voice_id, display_name, language=info["language"])
         return self._availableVoicesCache
 
     def _get_voice(self) -> Optional[str]:
-        if self._voice_id is None:
-            available_voices = self.availableVoices
-            if available_voices:
-                self._voice_id = list(available_voices.keys())[0]
-                if self.check():
-                    self._load_tts_voice()
+        if self._voice_id is None and self._voice_catalog:
+            self._voice_id = next(iter(self._voice_catalog))
+            self._load_tts_voice()
         return self._voice_id
 
     def _set_voice(self, value: str):
-        if value not in self.availableVoices:
+        if value not in self._voice_catalog:
             log.warning(f"Phoonnx: Attempting to set invalid voice: {value}.")
             return
         if self._voice_id != value:
             self._voice_id = value
-            if self.check():
-                self._load_tts_voice()
+            self.cancel()
+            self._load_tts_voice()
 
     def _load_tts_voice(self):
-        if self._voice_id == VOICE_ID and not self._voice_loaded_event.is_set() and self._loader_thread is None:
-            log.info(f"Phoonnx: Starting asynchronous loading for voice '{self._voice_id}'.")
-            model_path = os.path.join(DRIVER_DIR, MODEL_FILENAME)
-            config_path = os.path.join(DRIVER_DIR, CONFIG_FILENAME)
-            self._loader_thread = _VoiceLoaderThread(
-                driver=self,
-                voice_id=self._voice_id,
-                model_path=model_path,
-                config_path=config_path
-            )
-            self._loader_thread.start()
-        elif self._voice_id != VOICE_ID:
-            self.tts_voice = None
-            self._player = None
-            self._SynthesisConfig_class = None
+        info = self._voice_catalog.get(self._voice_id)
+        if info is None:
+            return
+        log.info(f"Phoonnx: Starting asynchronous loading for voice '{self._voice_id}'.")
+        self._load_generation += 1
+        self._voice_loaded_event.clear()
+        self._loader_thread = _VoiceLoaderThread(
+            driver=self,
+            voice_id=self._voice_id,
+            model_path=info["model"],
+            config_path=info["config"],
+            generation=self._load_generation,
+        )
+        self._loader_thread.start()
 
     def _get_rate(self) -> int:
         return self._rate

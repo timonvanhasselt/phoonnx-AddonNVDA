@@ -213,10 +213,12 @@ def nvda_env(tmp_path):
     driver_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver_mod)
 
-    # dummy voice files so check() passes
-    (tmp_path / driver_mod.MODEL_FILENAME).write_bytes(b"onnx")
-    (tmp_path / driver_mod.CONFIG_FILENAME).write_text("{}")
+    # dummy bundled voice so check() passes; empty cache dir isolated from ~
+    voice = driver_mod.DEFAULT_VOICE_ID
+    (tmp_path / f"{voice}.onnx").write_bytes(b"onnx")
+    (tmp_path / f"{voice}.onnx.json").write_text("{}")
     driver_mod.DRIVER_DIR = str(tmp_path)
+    driver_mod.VOICE_CACHE_DIR = str(tmp_path / "cache")
 
     yield types.SimpleNamespace(
         module=driver_mod,

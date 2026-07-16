@@ -25,8 +25,13 @@ Demo video: https://www.youtube.com/watch?v=ASYrV8R1zQw
 2. Select "Phoonnx TTS Driver" from the synthesizer combo box and press OK.
 3. Adjust the voice, rate and volume via NVDA's Speech Settings.
 
-The add-on currently ships a single bundled voice (`dii_nl-NL`, Dutch). Voice
-management (downloading and switching voices at runtime) is on the roadmap.
+### Voices
+
+The add-on ships a bundled Dutch voice (`dii_nl-NL`) and also discovers any
+voice placed in `%USERPROFILE%\.cache\phoonnx\voices` — drop a Piper-style
+`<voice>.onnx` + `<voice>.onnx.json` pair there and it appears in NVDA's voice
+list after switching synthesizers (no reinstall needed). A settings panel for
+downloading voices from the phoonnx catalog is on the roadmap.
 
 > **Note on rate:** the NVDA rate setting (0–100) maps to the model's
 > `length_scale`; rate **50** is normal speed (`length_scale` 1.0), higher rates
@@ -60,10 +65,17 @@ committed to the repo). Place the voice model (`dii_nl-NL.onnx` +
 `dii_nl-NL.onnx.json`) next to `__init__.py`; only the `.onnx.json` is committed.
 
 Voices whose config uses `"phoneme_type": "espeak"` need espeak phonemization at
-runtime. Bundling the espeak-ng binary on Windows is fragile;
-[espyak](https://github.com/TigreGotico/espyak), a pure-Python byte-exact
-reimplementation of espeak-ng's G2P, is the planned replacement so no native
-binary needs to be packaged.
+runtime. Bundling the espeak-ng binary on Windows is fragile; install
+`phoonnx[espeak]` instead, which pulls in
+[espyak](https://github.com/TigreGotico/espyak) — a pure-Python byte-exact
+reimplementation of espeak-ng's G2P that phoonnx falls back to automatically
+when the binary is absent — so no native binary needs to be packaged.
+
+The `release_bundle` CI job (manual dispatch) vendors the phoonnx runtime for
+64-bit Windows/Python 3.13 (NVDA 2026.x) and optionally bundles a voice model
+given its URL, uploading a runnable `.nvda-addon` artifact. NVDA 2025.x is
+32-bit and onnxruntime ships no win32 wheels, so that bundle must be built
+manually with a 32-bit Python.
 
 ### Building the package
 
