@@ -30,8 +30,14 @@ Demo video: https://www.youtube.com/watch?v=ASYrV8R1zQw
 The add-on ships a bundled Dutch voice (`dii_nl-NL`) and also discovers any
 voice placed in `%USERPROFILE%\.cache\phoonnx\voices` — drop a Piper-style
 `<voice>.onnx` + `<voice>.onnx.json` pair there and it appears in NVDA's voice
-list after switching synthesizers (no reinstall needed). A settings panel for
-downloading voices from the phoonnx catalog is on the roadmap.
+list after switching synthesizers (no reinstall needed).
+
+The add-on also adds a **Phoonnx Voices** category to NVDA Settings
+(**NVDA+N** → Preferences → Settings) that lists the phoonnx voice catalog and
+downloads voices straight into that cache directory (or removes installed
+ones). Downloads run in the background; switch synthesizers once a voice is
+installed to refresh NVDA's voice list. The catalog requires the bundled
+phoonnx runtime and an internet connection.
 
 > **Note on rate:** the NVDA rate setting (0–100) maps to the model's
 > `length_scale`; rate **50** is normal speed (`length_scale` 1.0), higher rates
@@ -39,7 +45,10 @@ downloading voices from the phoonnx catalog is on the roadmap.
 
 ## 🛠 Developing
 
-All driver logic lives in `synthDrivers/phoonnx/__init__.py`. Text is queued by
+All driver logic lives in `synthDrivers/phoonnx/__init__.py`; voice
+catalog/download logic lives in `synthDrivers/phoonnx/voice_manager.py` (pure
+Python, no NVDA imports) with the wx settings panel wrapping it in
+`globalPlugins/phoonnxVoiceManager/`. Text is queued by
 `SynthDriver.speak()` and synthesized on a worker thread that streams int16 audio
 chunks to an `nvwave.WavePlayer`; index and break commands in the speech sequence
 are honored, and the NVDA UI thread is never blocked.
