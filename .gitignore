@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.nvda-addon
+synthDrivers/phoonnx/phoonnx_libs/
+synthDrivers/phoonnx/*.onnx
+dist/
+TODO.md
+AGENTS.md
+CLAUDE.md
