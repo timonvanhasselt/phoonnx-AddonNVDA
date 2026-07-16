@@ -1,0 +1,78 @@
+name: Tests & Addon Build
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main, master]
+  workflow_dispatch:
+    inputs:
+      voice_url:
+        description: "URL of a .onnx voice model to bundle (its .onnx.json is fetched from <url>.json)"
+        required: false
+        type: string
+
+jobs:
+  unit_tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # NVDA 2025.x ships Python 3.11; 2026.x ships 3.13
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: pip install pytest numpy
+      - name: Run tests
+        run: pytest test/ -v
+
+  build_addon:
+    runs-on: ubuntu-latest
+    needs: unit_tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build .nvda-addon skeleton
+        run: python build_addon.py dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvda-addon
+          path: dist/*.nvda-addon
+
+  # Full runnable bundle for NVDA 2026.x (64-bit, Python 3.13). NVDA 2025.x is
+  # 32-bit; win32 wheels for onnxruntime are unavailable, so that bundle must be
+  # produced manually on a 32-bit Python for now.
+  release_bundle:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: unit_tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Vendor phoonnx runtime for Windows into phoonnx_libs
+        run: |
+          pip download "phoonnx[espeak]" --pre \
+            --platform win_amd64 --python-version 3.13 --only-binary=:all: \
+            -d wheels/
+          mkdir -p synthDrivers/phoonnx/phoonnx_libs
+          for whl in wheels/*.whl; do
+            unzip -qo "$whl" -d synthDrivers/phoonnx/phoonnx_libs/
+          done
+      - name: Bundle voice model
+        if: inputs.voice_url != ''
+        run: |
+          cd synthDrivers/phoonnx
+          curl -fL -O "${{ inputs.voice_url }}"
+          curl -fL -O "${{ inputs.voice_url }}.json"
+      - name: Build runnable .nvda-addon
+        run: python build_addon.py dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nvda-addon-win64-bundle
+          path: dist/*.nvda-addon

@@ -1,59 +1,109 @@
-# Phoonnx TTS synthesizer for NVDA screenreader (proof of concept)
+# Phoonnx TTS synthesizer for NVDA
 
-The Phoonnx TTS Driver is an NVDA add-on for Windows NVDA screenreader that integrates the [Phoonnx engine](https://github.com/TigreGotico/phoonnx) as a speech synthesizer. This driver is designed to utilize ONNX-based voices (like PiperTTS) within the NVDA screen reader.
+An [NVDA](https://www.nvaccess.org/) add-on for Windows that integrates the
+[phoonnx engine](https://github.com/TigreGotico/phoonnx) as a speech synthesizer,
+bringing ONNX-based neural voices (Piper-style and beyond) to the NVDA screen reader.
 
-Check the following youtube video to see it in action: https://www.youtube.com/watch?v=ASYrV8R1zQw
+Demo video: https://www.youtube.com/watch?v=ASYrV8R1zQw
 
-## Credits: 
-[@JarbasAI](https://github.com/JarbasAl) of for making the phoonnx engine!
+## Credits
 
-## 📦 Installation (test version)
+- [@timonvanhasselt](https://github.com/timonvanhasselt) (Visio) — original add-on author.
+- [@JarbasAI](https://github.com/JarbasAl) — the phoonnx engine.
 
-Install the test add-on manually using the add-on file (`.nvda-addon`).
+## 📦 Installation
 
-1.  Download the latest `.nvda-addon` file from the [releases section](https://github.com/timonvanhasselt/phoonnx-AddonNVDA/releases) (tested with NVDA 2025.3, minimal version is 2025.1)
-2.  Ensure NVDA is running.
-3.  Press Enter on the downloaded `.nvda-addon` file in Windows Explorer.
-4.  NVDA will ask if you want to install the add-on. Confirm the installation and follow the prompts.
-5.  NVDA will ask you to restart the screen reader. Do this to complete the installation.
+1. Download the latest `.nvda-addon` file from the
+   [releases section](https://github.com/TigreGotico/phoonnx-AddonNVDA/releases)
+   (tested with NVDA 2025.3, minimum version 2025.1).
+2. With NVDA running, press Enter on the downloaded `.nvda-addon` file in Windows Explorer.
+3. Confirm the installation and restart NVDA when prompted.
 
 ## ⚙️ Configuration
 
-After installation, you must select the Phoonnx synthesizer in NVDA:
+1. Open the NVDA menu (**NVDA+N**) → **Preferences** → **Synthesizer...** (or **NVDA+Ctrl+S**).
+2. Select "Phoonnx TTS Driver" from the synthesizer combo box and press OK.
+3. Adjust the voice, rate and volume via NVDA's Speech Settings.
 
-1.  Open the NVDA Menu (**NVDA key + N**).
-2.  Go to Preferences** and then **Synthesizer...** (or Nvda + control + S)
-3.  Select Phoonnx TTS Driver" from the synthesizer combo box.
-4.  Press OK to save the settings.
-5.  You can now adjust the voice, rate, volume, and pitch via NVDA's Speech Settings.
-6.  Choose the Phoonnx Voice Settings panel to download more/other voices, update the voice list and/or remove voices from the cache. Voice models are stored in the users folder, for example C:\user\.cache\phoonnx\voices
+### Voices
 
-> **Note on Rate:** The add-on translates the NVDA rate setting (0-100) to the TTS model's `length_scale`. A default NVDA rate of **50** corresponds to a `length_scale` of **1.0** (normal speed). Lower rates result in a higher `length_scale` (slower speech), and higher rates result in a lower `length_scale` (faster speech).
+The add-on ships a bundled Dutch voice (`dii_nl-NL`) and also discovers any
+voice placed in `%USERPROFILE%\.cache\phoonnx\voices` — drop a Piper-style
+`<voice>.onnx` + `<voice>.onnx.json` pair there and it appears in NVDA's voice
+list after switching synthesizers (no reinstall needed).
 
-## 🛠 Developer Requirements (For Building)
+The add-on also adds a **Phoonnx Voices** category to NVDA Settings
+(**NVDA+N** → Preferences → Settings) that lists the phoonnx voice catalog and
+downloads voices straight into that cache directory (or removes installed
+ones). Downloads run in the background; switch synthesizers once a voice is
+installed to refresh NVDA's voice list. The catalog requires the bundled
+phoonnx runtime and an internet connection.
 
-To develop or bundle this add-on, you need to set up a specific Python environment that matches NVDA's requirements.
+> **Note on rate:** the NVDA rate setting (0–100) maps to the model's
+> `length_scale`; rate **50** is normal speed (`length_scale` 1.0), higher rates
+> are faster. The mapping is clamped to a usable range at both extremes.
 
-### 1. Python Environment Setup
+## 🛠 Developing
 
-NVDA currently uses **Python 3.11.9 (32-bit for NVDA 2025.x)** or **Python 3.13.x (64-bit for NVDA 2026.x). You must use this exact version to ensure library compatibility.
+All driver logic lives in `synthDrivers/phoonnx/__init__.py`; voice
+catalog/download logic lives in `synthDrivers/phoonnx/voice_manager.py` (pure
+Python, no NVDA imports) with the wx settings panel wrapping it in
+`globalPlugins/phoonnxVoiceManager/`. Text is queued by
+`SynthDriver.speak()` and synthesized on a worker thread that streams int16 audio
+chunks to an `nvwave.WavePlayer`; index and break commands in the speech sequence
+are honored, and the NVDA UI thread is never blocked.
 
-1.  Install Python for Windows.
-2.  Create a Virtual Environment (venv):
-    ```bash
-    py -m venv phoonnx_venv
-    phoonnx_venv\Scripts\activate
-    ```
-3.  **Install the Phoonnx Package:**
-    ```bash
-    pip install phoonnx 
-    ```
-    or `pip install git+https://github.com/TigreGotico/phoonnx` for the pre-releases
+### Python environment
 
-### 2. Bundling Libraries (`phoonnx_libs`)
+NVDA embeds its own Python; the bundled libraries must match it exactly:
 
-The add-on bundles the phoonnx dependencies in the `phoonnx_libs` folder .
+- NVDA 2025.x: Python **3.11.9 (32-bit)**
+- NVDA 2026.x: Python **3.13.x (64-bit)**
 
-Copy the relevant contents of your virtual environment's `site-packages` directory (usually `phoonnx_venv\Lib\site-packages`) to the add-on's `phoonnx_libs` folder.
+```bash
+py -m venv phoonnx_venv
+phoonnx_venv\Scripts\activate
+pip install phoonnx
+```
 
+### Bundling libraries (`phoonnx_libs`)
 
+Copy the relevant contents of the venv's `site-packages` into
+`synthDrivers/phoonnx/phoonnx_libs/` (added to `sys.path` at import time; not
+committed to the repo). Place the voice model (`dii_nl-NL.onnx` +
+`dii_nl-NL.onnx.json`) next to `__init__.py`; only the `.onnx.json` is committed.
+
+Voices whose config uses `"phoneme_type": "espeak"` need espeak phonemization at
+runtime. Bundling the espeak-ng binary on Windows is fragile; install
+`phoonnx[espeak]` instead, which pulls in
+[espyak](https://github.com/TigreGotico/espyak) — a pure-Python byte-exact
+reimplementation of espeak-ng's G2P that phoonnx falls back to automatically
+when the binary is absent — so no native binary needs to be packaged.
+
+The `release_bundle` CI job (manual dispatch) vendors the phoonnx runtime for
+64-bit Windows/Python 3.13 (NVDA 2026.x) and optionally bundles a voice model
+given its URL, uploading a runnable `.nvda-addon` artifact. NVDA 2025.x is
+32-bit and onnxruntime ships no win32 wheels, so that bundle must be built
+manually with a 32-bit Python.
+
+### Building the package
+
+```bash
+python build_addon.py [output_dir]
+```
+
+This zips the manifest and `synthDrivers/` into `phoonnx-<version>.nvda-addon`.
+It warns if `phoonnx_libs/` or the `.onnx` weights are missing — the resulting
+skeleton installs but the driver's `check()` fails until they are added.
+
+### Tests
+
+```bash
+pip install pytest numpy
+pytest test/
+```
+
+The suite stubs the NVDA host modules (`nvwave`, `synthDriverHandler`, …) and the
+phoonnx runtime, so it runs on any platform without NVDA or ONNX models. CI runs
+it on Python 3.11 and 3.13 (the NVDA interpreter versions) and uploads a skeleton
+`.nvda-addon` artifact.
